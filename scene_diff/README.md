@@ -1,0 +1,267 @@
+<br />
+<p align="center">
+  <h1 align="center">SceneDiff: A Benchmark and Method for Multiview Object Change Detection</h1>
+  <h3 align="center">ECCV 2026</h3>
+  <p align="center">
+   <a href="http://yuqunw.github.io"><strong>Yuqun Wu</strong></a>
+    ·
+    <a href="https://chih-hao-lin.github.io"><strong>Chih-hao Lin</strong></a>
+    ·
+    <a href="https://hungdche.github.io"><strong>Henry Che</strong></a>
+    ·
+    <a href="https://adititiwari19.github.io"><strong>Aditi Tiwari</strong></a>
+    ·
+    <a href="https://zouchuhang.github.io"><strong>Chuhang Zou</strong></a>
+    ·
+    <a href="https://shenlong.web.illinois.edu"><strong>Shenlong Wang</strong></a>
+    ·
+    <a href="http://dhoiem.cs.illinois.edu"><strong>Derek Hoiem</strong></a>
+  </p>
+</p>
+  <p align="center">
+    <a href='http://yuqunw.github.io/SceneDiff' style='padding-left: 0.5rem;'>
+      <img src='https://img.shields.io/badge/Project-Page-blue?style=flat&logo=Google%20chrome&logoColor=blue' alt='Project Page'></a>
+    <a href='https://arxiv.org/abs/2512.16908'><img src='https://img.shields.io/badge/arXiv-2512.16908-b31b1b.svg'  alt='Arxiv'></a>
+    <a href='https://huggingface.co/datasets/yuqun/SceneDiff' style='padding-left: 0.5rem;'>
+      <img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Dataset-yellow?style=flat' alt='Dataset'></a>
+    <a href='https://github.com/yuqunw/scenediff_annotator' style='padding-left: 0.5rem;'>
+      <img src='https://img.shields.io/badge/GitHub-Data%20Annotator-black?style=flat&logo=github&logoColor=white' alt='Data Annotator'></a>
+  </p>
+</p>
+<p align="center"> 
+<img src="assets/teaser.png"/>
+</p>
+<br />
+
+This repository contains the code for the paper [SceneDiff: A Benchmark and Method for Multiview Object Change Detection](http://yuqunw.github.io/SceneDiff). We investigate the problem of identifying objects that have been changed between a pair of captures of the same scene at different times, introducing the first object-level multiview change detection benchmark and a new training-free method.
+
+## Updates
+
+**[Mar 2026]** We update the evaluation protocol and default model parameters:
+
+- **Evaluation criteria.** The previous evaluation used center-point matching for detection–GT correspondence. The evaluation now uses **mask based IoU matching** and reports three metrics:
+  - **px/im IoU** – pixel-level IoU computed on merged masks across all views and frames.
+  - **obj/im AP** – per-frame Average Precision with 0.5 IoU threshold (VOC-style).
+  - **obj/sc AP** – per-scene Average Precision at the object level with 0.5 IoU threshold across all frames, reported in two variants:
+    - *without change-type requirement* – a detection matches any GT object regardless of change type across both sequences.
+    - *with change-type requirement* – a detection must also match the GT change type (moved vs. added/removed).
+- **Default evaluation parameters updated.** `--duplicate_match_threshold` and `--per_frame_duplicate_match_threshold` now default to `1`. 
+
+---
+
+
+## SceneDiff Benchmark
+
+Download the SceneDiff benchmark dataset from [🤗 Hugging Face](https://huggingface.co/datasets/yuqun/SceneDiff).
+
+```bash
+mkdir data && cd data
+wget https://huggingface.co/datasets/yuqun/SceneDiff/resolve/main/scenediff_benchmark.zip
+unzip scenediff_bechmark.zip
+```
+
+### Dataset Structure
+
+```
+scenediff_benchmark/
+├── data/                          # 350 sequence pairs
+│   ├── sequence_pair_1/
+│   │   ├── original_video1.mp4    # Raw video before change
+│   │   ├── original_video2.mp4    # Raw video after change
+│   │   ├── video1.mp4             # Video with annotation mask (before)
+│   │   ├── video2.mp4             # Video with annotation mask (after)
+│   │   ├── segments.pkl           # Dense segmentation masks for evaluation
+│   │   └── metadata.json          # Sequence metadata
+│   ├── sequence_pair_2/
+│   │   └── ...
+│   └── ...
+├── splits/                        # Val/Test splits
+│   ├── val_split.json
+│   └── test_split.json
+└── vis/                           # Visualization tools
+    ├── visualizer.py              # Flask-based web viewer
+    ├── requirements.txt
+    └── templates/
+```
+
+**About `segments.pkl`:** See the [detailed description here](https://huggingface.co/datasets/yuqun/SceneDiff#dataset-structure).
+
+**Visualization:** For better visualization, run the command:
+```bash
+cd data/scenediff_benchmark/vis && pip install -r requirements.txt
+python visualizer.py
+```
+
+### Evaluation
+We expect the method predictions have following structures:
+```
+output_dir/
+├── sequence_pair_1/
+│   └── object_masks.pkl           # Dense segmentations of changed objects (for evaluation)
+├── sequence_pair_2/
+└── ...
+```
+with `object_masks.pkl` following this structure:
+```python
+object_masks = {
+    'H': int,                           # Image height
+    'W': int,                           # Image width
+    'video_1': {                        # Objects existing in video_1
+        'object_id_1': {                # Integer ID for each detected object
+            'frame_id_1': {             # Integer frame number
+                'mask': RLE_Mask,       # Run-length encoded mask
+                'cost': float           # Confidence score of the prediction
+            },
+            ...
+        },
+        ...
+    },
+    'video_2': {                        # Objects existing in video_2
+        'object_id_1': {                # Integer ID for each detected object
+            'frame_id_1': {             # Integer frame number
+                'mask': RLE_Mask,       # Run-length encoded mask
+                'cost': float           # Confidence score of the prediction
+            },
+            ...
+        },
+        ...
+    }
+}
+```
+
+Then the evaluation script can be run with:
+
+```bash
+python scripts/evaluate_multiview.py \
+    --pred_dir ${OUTPUT_DIR} \
+    --splits val \
+    --sets varied \
+    --output_path ${OUTPUT_FILE_PATH} \
+    --visualize False
+```
+
+**Arguments:**
+
+- `--duplicate_match_threshold`: Max number of times a GT object can be matched at the object level (default: 1)
+- `--per_frame_duplicate_match_threshold`: Max number of times a GT region can be matched per frame/view (default: 1)
+- `--splits`: Choose from `val`, `test`, or `all`
+- `--sets`: Choose from `varied`, `kitchen`, or `All`
+- `--visualize`: Set to `True` to save visualization outputs
+
+**Output:** The evaluation results will be saved to `${OUTPUT_FILE_PATH}`
+
+## Getting Started
+
+### Installation
+
+1. **Clone this repository with submodules:**
+  ```bash
+    git clone --recursive https://github.com/yuqunw/scene_diff.git
+    cd scene_diff
+  ```
+2. **Create conda environment and install dependencies:**
+  ```bash
+    conda create -n scene_diff python=3.10 -y
+    conda activate scene_diff
+    pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121 # Install the pytorch fitting your nvcc version 
+    pip install -r requirements.txt
+    pip install torch-scatter -f https://data.pyg.org/whl/torch-2.5.1+cu121.html # install torch_scatter
+  ```
+3. **Install submodules:**
+  ```bash
+    # Install segment-anything submodule
+    cd submodules/segment-anything-langsplat-modified
+    pip install -e .
+    cd ../..
+  ```
+
+### Download Checkpoints
+
+**1. Download the Segment-Anything checkpoint:**
+
+```bash
+bash checkpoints/download_sam_checkpoint.sh
+```
+
+**2. Configure DINOv3 checkpoint:**
+
+The DINOv3 checkpoint will be automatically downloaded on first use after filling in the checkpoint url. To set it up:
+
+1. Visit the [DINOv3 downloads page](https://ai.meta.com/resources/models-and-libraries/dinov3-downloads/) to apply for the checkpoint access
+2. Right-click on `dinov3_vith16plus_pretrain_lvd1689m-7c1da9a5.pth` and copy the download link
+3. Update the URL in `configs/scenediff_config.yml`:
+  ```yaml
+   models:
+     dinov3:
+       weight_url: "<paste_your_copied_url_here>"
+  ```
+
+## Quick Demo
+
+Run change detection on any two videos:
+
+```bash
+python scripts/demo.py \
+    --config configs/scenediff_config.yml \
+    --video1 path/to/video1.mp4 \
+    --video2 path/to/video2.mp4 \
+    --output output/demo
+```
+
+**Output:** The script generates point cloud visualizations including score maps and object segmentations for both videos in the specified output directory.
+
+**Parameters:** You can modify parameters in `configs/scenediff_config.yml`. If the automatic threshold for change detection doesn't work well (score maps look correct but too many or few detections), you can manually set `detection.object_threshold` in the config file.   
+
+## Predict on SceneDiff Benchmark
+
+Run inference on all sequences in the benchmark:
+
+```bash
+python scripts/predict_multiview.py \
+    --config configs/scenediff_config.yml \
+    --splits val \
+    --sets varied \
+    --output_dir output/scenediff_benchmark
+```
+
+**Arguments:**
+
+- `--splits`: Choose from `val`, `test`, or `all`
+- `--sets`: Choose from `varied`, `kitchen`, or `All`
+- `--output_dir`: Directory to save predictions
+- Modify more arguments in the config file
+
+
+
+## Acknowledgement
+
+We thank the great work from these repositories:
+* [Segment-Anything](https://github.com/facebookresearch/segment-anything) and [LangSplat](https://github.com/minghanqin/LangSplat) for region segmentation
+* [Pi3](https://github.com/yyfz/Pi3) for geometry estimation 
+* [DINOv3](https://github.com/facebookresearch/dinov3) for appearance feature extraction
+
+
+## Citation
+If you find this method helpful for your research, please consider citing the following BibTeX entry.
+```BibTex
+@article{wu2025scenediff,
+  title={SceneDiff: A Benchmark and Method for Multiview Object Change Detection},
+  author={Wu, Yuqun and Lin, Chih-hao and Che, Henry and Tiwari, Aditi and Zou, Chuhang and Wang, Shenlong and Hoiem, Derek},
+  journal={arXiv preprint arXiv:2512.16908},
+  year={2025}
+}
+```
+If you find the dataset helpful for your research, please consider citing the following BibTeX entry in addition to SceneDiff.
+```BibTex
+@inproceedings{perrett2025hd,
+  title={Hd-epic: A highly-detailed egocentric video dataset},
+  author={Perrett, Toby and Darkhalil, Ahmad and Sinha, Saptarshi and Emara, Omar and Pollard, Sam and Parida, Kranti Kumar and Liu, Kaiting and Gatti, Prajwal and Bansal, Siddhant and Flanagan, Kevin and others},
+  booktitle={Proceedings of the Computer Vision and Pattern Recognition Conference},
+  pages={23901--23913},
+  year={2025}
+}
+```
+
+## License
+
+This project is released under the MIT License. See [LICENSE](LICENSE) for details.

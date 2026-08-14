@@ -1,0 +1,18 @@
+faiss-cpu
+open3d
+opencv-python
+pycocotools
+matplotlib
+onnxruntime
+onnx
+numpy==1.26.1
+Pillow
+huggingface_hub
+einops
+safetensors
+torchmetrics
+termcolor
+scikit-image
+pyyaml  # For configuration file parsing
+pillow
+plyfile

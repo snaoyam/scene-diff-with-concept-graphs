@@ -1,0 +1,24 @@
+# 대용량 데이터셋 / 체크포인트 — 로컬 전용, git 히스토리에 올리지 않음
+/Datasets/
+/replica-semantic-saved-maps-gt/
+/mapping_process.log
+*.rrd
+
+/open-eqa/data/scannet/
+/ScanNet/data-scannet/
+/LLaVA/llama-7b/
+/LLaVA/checkpoint/
+
+/Grounded-Segment-Anything/*.pth
+/Grounded-Segment-Anything/*.pth.*
+
+
+/results*/
+/concept-graphs-dev/conceptgraph/dataset/dataconfigs/scenediff/
+
+*.pth
+
+.claude*
+/.trash/
+/benchmark_output/*
+/terminal-output/*

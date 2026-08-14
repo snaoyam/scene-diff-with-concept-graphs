@@ -1,0 +1,14 @@
+cyws-3d.ckpt
+output/
+vis_figures/
+save_dir/
+.vscode/
+__pycache__/
+
+*.ply
+data_splits/
+*.pkl
+eval_list_dir/
+data/
+checkpoints/sam_vit_h_4b8939.pth
+data
