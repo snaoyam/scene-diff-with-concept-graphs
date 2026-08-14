@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Step 3: score one pair's step-2 object_masks.pkl against the official SceneDiff
+# benchmark ground truth (scene_diff/scripts/evaluate_multiview.py, called directly for
+# a single scene by run_scene_diff_benchmark.py).
+#
+# Usage:
+#   run_scene_diff_benchmark <pair_name>
+#   ./run-scene-diff-benchmark.sh <pair_name>
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OUTPUTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/outputs"
+
+run_scene_diff_benchmark() {
+    local pair_name="$1"
+    conda run -n scene_diff --no-capture-output \
+        python "$SCRIPT_DIR/run_scene_diff_benchmark.py" \
+            --pair_name "$pair_name" \
+            --benchmark_data_root "$OUTPUTS_DIR/benchmark_data" \
+            --output_root "$OUTPUTS_DIR/benchmark_result"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    set -euo pipefail
+    if [[ $# -ne 1 ]]; then
+        echo "Usage: $(basename "$0") <pair_name>" >&2
+        exit 1
+    fi
+    run_scene_diff_benchmark "$1"
+fi

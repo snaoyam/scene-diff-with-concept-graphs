@@ -121,7 +121,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     tracker = MappingTracker()
     tracker.reset()
     DenoisingTracker().reset()
-    exp_out_path = get_exp_out_path(cfg.dataset_root, cfg.scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
+    exp_out_path = get_exp_out_path(cfg.output_root, cfg.scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
     exp_out_path.mkdir(exist_ok=True, parents=True)
 
     owandb = OptionalWandB()
@@ -161,10 +161,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         )
         frames = []
     # output folder for this mapping experiment
-    exp_out_path = get_exp_out_path(cfg.dataset_root, cfg.scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
+    exp_out_path = get_exp_out_path(cfg.output_root, cfg.scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
 
     # output folder of the detections experiment to use
-    det_exp_path = get_exp_out_path(cfg.dataset_root, cfg.scene_id, cfg.detections_exp_suffix, make_dir=False, exps_dir_name=cfg.exps_dir_name)
+    det_exp_path = get_exp_out_path(cfg.output_root, cfg.scene_id, cfg.detections_exp_suffix, make_dir=False, exps_dir_name=cfg.exps_dir_name)
 
     # we need to make sure to use the same classes as the ones used in the detections
     detections_exp_cfg = cfg_to_dict(cfg)
@@ -186,6 +186,15 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         ## Initialize the detection models, reusing them across scene variants if already loaded
         if shared_models is None:
             detection_model = measure_time(YOLO)('yolov8l-world.pt')
+            # Move to cfg.device before the first set_classes() call. YOLO-World's
+            # internal CLIP text encoder is built and cached lazily on whatever
+            # device the model is on at that moment, but the cached wrapper's
+            # tokenize() keeps using that snapshot device forever afterward (it
+            # doesn't track later .to() moves). If set_classes() runs first on
+            # cpu and predict() later moves the model to cuda, a second
+            # set_classes() call (e.g. for the "after" variant sharing this
+            # model) mismatches: cached cuda weights vs cpu tokens.
+            detection_model.to(cfg.device)
             sam_predictor = SAM('sam_l.pt') # SAM('mobile_sam.pt') # UltraLytics SAM
             # sam_predictor = measure_time(get_sam_predictor)(cfg) # Normal SAM
             clip_model, _, clip_preprocess = open_clip.create_model_and_transforms(

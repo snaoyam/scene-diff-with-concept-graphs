@@ -9,6 +9,11 @@ hydra:
 repo_root: /node_data/urp26su_dongwoo/concept-graphs-project/concept-graphs
 data_root: /node_data/urp26su_dongwoo/concept-graphs-project/Datasets
 
+# Where mapping experiment outputs (obj_json, edge_json, pcd, detections/, ...) are
+# written. Kept separate from dataset_root, which is read-only input data -- outputs
+# always land under the project-level outputs/ directory, not inside Datasets/.
+output_root: ${repo_root}/../outputs/concept_graphs
+
 use_wandb: !!bool False
 
 # dataset info
