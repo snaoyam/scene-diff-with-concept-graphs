@@ -1,9 +1,7 @@
 
-from collections.abc import Iterable
 import copy
 import matplotlib
 import torch
-import torch.nn.functional as F
 import numpy as np
 import open3d as o3d
 
@@ -54,25 +52,6 @@ class DetectionList(list):
         self.extend(other)
         return self
     
-    def slice_by_indices(self, index: Iterable[int]):
-        '''
-        Return a sublist of the current list by indexing
-        '''
-        new_self = type(self)()
-        for i in index:
-            new_self.append(self[i])
-        return new_self
-    
-    def slice_by_mask(self, mask: Iterable[bool]):
-        '''
-        Return a sublist of the current list by masking
-        '''
-        new_self = type(self)()
-        for i, m in enumerate(mask):
-            if m:
-                new_self.append(self[i])
-        return new_self
-    
     def get_most_common_class(self) -> list[int]:
         classes = []
         for d in self:
@@ -112,21 +91,6 @@ class DetectionList(list):
             
     
 class MapObjectList(DetectionList):
-    def compute_similarities(self, new_clip_ft):
-        '''
-        The input feature should be of shape (D, ), a one-row vector
-        This is mostly for backward compatibility
-        '''
-        # if it is a numpy array, make it a tensor 
-        new_clip_ft = to_tensor(new_clip_ft)
-        
-        # assuming cosine similarity for features
-        clip_fts = self.get_stacked_values_torch('clip_ft')
-
-        similarities = F.cosine_similarity(new_clip_ft.unsqueeze(0), clip_fts)
-        # return similarities.squeeze()
-        return similarities
-    
     def to_serializable(self):
         s_obj_list = []
         for obj in self:
@@ -143,51 +107,18 @@ class MapObjectList(DetectionList):
             del s_obj_dict['bbox']
             
             s_obj_list.append(s_obj_dict)
-            
-        return s_obj_list
-    
-    def load_serializable(self, s_obj_list):
-        assert len(self) == 0, 'MapObjectList should be empty when loading'
-        for s_obj_dict in s_obj_list:
-            new_obj = copy.deepcopy(s_obj_dict)
-            
-            new_obj['clip_ft'] = to_tensor(new_obj['clip_ft'])
-            # new_obj['text_ft'] = to_tensor(new_obj['text_ft'])
-            
-            new_obj['pcd'] = o3d.geometry.PointCloud()
-            new_obj['pcd'].points = o3d.utility.Vector3dVector(new_obj['pcd_np'])
-            new_obj['bbox'] = o3d.geometry.OrientedBoundingBox.create_from_points(
-                o3d.utility.Vector3dVector(new_obj['bbox_np']))
-            new_obj['bbox'].color = new_obj['pcd_color_np'][0]
-            new_obj['pcd'].colors = o3d.utility.Vector3dVector(new_obj['pcd_color_np'])
-            
-            del new_obj['pcd_np']
-            del new_obj['bbox_np']
-            del new_obj['pcd_color_np']
-            
-            self.append(new_obj)
 
-# not sure if I will use this 
+        return s_obj_list
+
+# not sure if I will use this
 class MapEdge():
     def __init__(self, obj1_idx, obj2_idx, rel_type, num_detections=1, first_detected=None):
         self.obj1_idx = obj1_idx
         self.obj2_idx = obj2_idx
         self.rel_type = rel_type
         self.num_detections = num_detections
-        self.first_detected = first_detected # frame index that the object was first detected 
-        
-    def to_serializable(self):
-        return {
-            'obj1_idx': self.obj1_idx,
-            'obj2_idx': self.obj2_idx,
-            'rel_type': self.rel_type,
-        }
-    
-    def load_serializable(self, s_edge_dict):
-        self.obj1_idx = s_edge_dict['obj1_idx']
-        self.obj2_idx = s_edge_dict['obj2_idx']
-        self.rel_type = s_edge_dict['rel_type']
-        
+        self.first_detected = first_detected # frame index that the object was first detected
+
     def __str__(self):
         return f"({self.obj1_idx}, {self.rel_type}, {self.obj2_idx}), num_det: {self.num_detections}"
     
@@ -308,92 +239,6 @@ class MapEdgeMapping:
     def update_objects_list(self, new_objects):
         self.objects = new_objects
 
-    def merge_objects_edges(self, source_index, destination_index):
-        # Update edges for a merged object. source_index object is merged into destination_index object
-        updated_edges_by_index = {}
-        updated_edges_by_uuid = {}
-
-        for (obj1_index, obj2_index), curr_edge in self.edges_by_index.items():
-            # Check if source object is part of the edge and update the edge accordingly
-            
-            # if not (source_index in (obj1_index, obj2_index)):
-            #     continue
-            
-            new_obj1_index, new_obj2_index = obj1_index, obj2_index
-            
-            if new_obj1_index == new_obj2_index: # check loop edge
-                print(f"LOOOPY EDGE DETECTED: {new_obj1_index} == {new_obj2_index}")
-                pass
-            
-            # check if edge is between source and destination
-            if source_index in (new_obj1_index, new_obj2_index) and destination_index in (new_obj1_index, new_obj2_index):
-                print(f"Edge between source and destination: {source_index} in {new_obj1_index, new_obj2_index} and {destination_index} in {new_obj1_index, new_obj2_index}")
-                pass
-                continue
-            
-            if obj1_index == source_index:
-                print(f"obj1_index matches source_index: {obj1_index} == {source_index}")
-                new_obj1_index = destination_index
-                
-            if obj2_index == source_index:
-                print(f"obj2_index matches source_index: {obj2_index} == {source_index}")
-                new_obj2_index = destination_index
-                
-            if new_obj1_index == new_obj2_index: # check loop edge
-                print(f"LOOOPY EDGE DETECTED: {new_obj1_index} == {new_obj2_index}")
-                pass
-                continue
-
-
-            # Generate new edge key and UUID key
-            new_key = (new_obj1_index, new_obj2_index)
-            new_obj1_uuid, new_obj2_uuid = self.objects[new_obj1_index]['id'], self.objects[new_obj2_index]['id']
-            new_uuid_key = (new_obj1_uuid, new_obj2_uuid)
-            new_edge = MapEdge(new_obj1_index, new_obj2_index, curr_edge.rel_type, curr_edge.num_detections)
-
-            # Check if the edge already exists after merge, update num_detections if it does
-            if new_key in updated_edges_by_index:
-                updated_edges_by_index[new_key].num_detections += curr_edge.num_detections
-            else:
-                curr_edge.obj1_idx = new_obj1_index
-                curr_edge.obj2_idx = new_obj2_index
-                updated_edges_by_index[new_key] = new_edge
-                updated_edges_by_uuid[new_uuid_key] = new_edge
-
-        # Update the class attributes
-        self.edges_by_index = updated_edges_by_index
-        self.edges_by_uuid = updated_edges_by_uuid
-        
-    def get_edges_by_curr_obj_num(self):
-        map_edges_by_curr_obj_num = []
-        for (obj1_idx, obj2_idx), map_edge in self.edges_by_index.items():
-            obj1_curr_obj_num = self.objects[obj1_idx]['curr_obj_num']
-            obj2_curr_obj_num = self.objects[obj2_idx]['curr_obj_num']
-            rel_type = map_edge.rel_type
-            map_edges_by_curr_obj_num.append((obj1_curr_obj_num, rel_type, obj2_curr_obj_num))
-        return map_edges_by_curr_obj_num
-    
-    def get_edges_by_curr_obj_num_label(self):
-        map_edges_by_curr_obj_num_label = []
-        for (obj1_idx, obj2_idx), map_edge in self.edges_by_index.items():
-            # Construct the curr_obj_num_label for both objects
-            obj1 = self.objects[obj1_idx]
-            obj2 = self.objects[obj2_idx]
-            obj1_curr_obj_num_label = f"{obj1['curr_obj_num']}_{obj1['class_name']}"
-            obj2_curr_obj_num_label = f"{obj2['curr_obj_num']}_{obj2['class_name']}"
-
-            # Append the edge with the formatted labels
-            map_edges_by_curr_obj_num_label.append((obj1_curr_obj_num_label, map_edge.rel_type, obj2_curr_obj_num_label))
-        return map_edges_by_curr_obj_num_label
-
-    def get_edge_endpoints(self, obj1_index, obj2_index):
-        # Check if the edge exists
-        if (obj1_index, obj2_index) in self.edges_by_index:
-            obj1_center = np.asarray(self.objects[obj1_index]['bbox'].get_center())
-            obj2_center = np.asarray(self.objects[obj2_index]['bbox'].get_center())
-            return [obj1_center, obj2_center]
-        return None
-
     def __str__(self):
         return '\n'.join([str(edge) for edge in self.edges_by_index.values()])
 
@@ -418,24 +263,3 @@ class MapEdgeMapping:
             'objects': s_objects
         }
         
-    def load_serializable(self, s_data):
-        assert len(self.edges_by_index) == 0 and len(self.objects) == 0, 'MapEdgeMapping should be empty when loading'
-        
-        # Deserialize the objects list first
-        self.objects.load_serializable(s_data['objects'])
-        
-        # Rebuild the edges
-        for s_edge in s_data['edges']:
-            obj1_index = s_edge['obj1_index']
-            obj2_index = s_edge['obj2_index']
-            rel_type = s_edge['rel_type']
-            num_detections = s_edge['num_detections']
-            
-            # Create a new edge
-            edge = MapEdge(obj1_index, obj2_index, rel_type, num_detections)
-            self.edges_by_index[(obj1_index, obj2_index)] = edge
-            
-            # Assuming 'id' attribute exists in the objects for UUID key generation
-            obj1_uuid = self.objects[obj1_index]['id']
-            obj2_uuid = self.objects[obj2_index]['id']
-            self.edges_by_uuid[(obj1_uuid, obj2_uuid)] = edge

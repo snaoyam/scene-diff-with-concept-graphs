@@ -3,12 +3,7 @@ Renders the final, whole-scene object graph from a completed mapping run's
 obj_json/edge_json output (as opposed to scenegraph_viz.py, which renders one
 frame at a time during the live run). Node colors match get_object_color() so
 ids line up visually with the per-frame overlays.
-
-Usage:
-    python visualize_full_scenegraph.py --exp_dir <path/to/exps/r_mapping_pilot>
-    python visualize_full_scenegraph.py --obj_json <...> --edge_json <...> --out <...>
 '''
-import argparse
 import json
 import math
 from pathlib import Path
@@ -145,32 +140,3 @@ def render_full_scenegraph(graph, save_path, title=None, seed=0):
     plt.close(fig)
     return save_path
 
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--exp_dir", type=str, default=None,
-                         help="Directory containing obj_json_*.json and edge_json_*.json; "
-                              "if given, obj_json/edge_json are auto-discovered.")
-    parser.add_argument("--obj_json", type=str, default=None)
-    parser.add_argument("--edge_json", type=str, default=None)
-    parser.add_argument("--out", type=str, default=None)
-    args = parser.parse_args()
-
-    if args.exp_dir:
-        exp_dir = Path(args.exp_dir)
-        obj_json = args.obj_json or next(exp_dir.glob("obj_json_*.json"))
-        edge_json = args.edge_json or next(exp_dir.glob("edge_json_*.json"))
-        out = args.out or (exp_dir / "scenegraph_full.png")
-    else:
-        assert args.obj_json and args.edge_json, "Provide --exp_dir, or both --obj_json and --edge_json"
-        obj_json = Path(args.obj_json)
-        edge_json = Path(args.edge_json)
-        out = Path(args.out) if args.out else obj_json.parent / "scenegraph_full.png"
-
-    graph = load_scene_graph(obj_json, edge_json)
-    save_path = render_full_scenegraph(graph, out, title=exp_dir.name if args.exp_dir else None)
-    print(f"Saved full scene graph ({graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges) to {save_path}")
-
-
-if __name__ == "__main__":
-    main()

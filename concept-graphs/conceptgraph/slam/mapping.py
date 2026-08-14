@@ -5,17 +5,15 @@ import torch.nn.functional as F
 from typing import List, Optional
 
 from conceptgraph.slam.slam_classes import MapObjectList, DetectionList
-from conceptgraph.utils.general_utils import Timer
 from conceptgraph.utils.ious import (
-    compute_iou_batch, 
-    compute_giou_batch, 
-    compute_3d_iou_accurate_batch, 
+    compute_iou_batch,
+    compute_giou_batch,
+    compute_3d_iou_accurate_batch,
     compute_3d_giou_accurate_batch,
 )
 from conceptgraph.slam.utils import (
     compute_overlap_matrix_general,
-    merge_obj2_into_obj1, 
-    compute_overlap_matrix_2set
+    merge_obj2_into_obj1,
 )
 from conceptgraph.utils.optional_wandb_wrapper import OptionalWandB
 owandb = OptionalWandB()
@@ -166,28 +164,4 @@ def merge_obj_matches(
             "frame_idx": tracker.curr_frame_idx,
         }
     )
-    return objects
-
-
-def merge_detections_to_objects(
-    downsample_voxel_size: float, dbscan_remove_noise: bool, dbscan_eps: float, dbscan_min_points: int,
-    spatial_sim_type: str, device: str, match_method: str, phys_bias: float,
-    detection_list: DetectionList, objects: MapObjectList, agg_sim: torch.Tensor
-) -> MapObjectList:
-    for detected_obj_idx in range(agg_sim.shape[0]):
-        if agg_sim[detected_obj_idx].max() == float('-inf'):
-            objects.append(detection_list[detected_obj_idx])
-        else:
-            existing_obj_match_idx = agg_sim[detected_obj_idx].argmax()
-            detected_obj = detection_list[detected_obj_idx]
-            matched_obj = objects[existing_obj_match_idx]
-            merged_obj = merge_obj2_into_obj1(
-                obj1=matched_obj, obj2=detected_obj, 
-                downsample_voxel_size=downsample_voxel_size, dbscan_remove_noise=dbscan_remove_noise, 
-                dbscan_eps=dbscan_eps, dbscan_min_points=dbscan_min_points, 
-                spatial_sim_type=spatial_sim_type, device=device, 
-                run_dbscan=False
-            )
-            objects[existing_obj_match_idx] = merged_obj
-            
     return objects

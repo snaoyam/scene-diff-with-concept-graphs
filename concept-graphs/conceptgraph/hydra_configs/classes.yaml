@@ -1,6 +1,0 @@
-defaults:
-  - base_paths
-
-classes_file: ${repo_root}/conceptgraph/scannet200_classes.txt
-bg_classes : ["wall", "floor", "ceiling"]
-skip_bg: !!bool False

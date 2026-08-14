@@ -9,6 +9,7 @@ import pickle
 from conceptgraph.slam.slam_classes import MapObjectList
 from conceptgraph.slam.utils import prepare_objects_save_vis
 from conceptgraph.utils.ious import mask_subtract_contained
+from conceptgraph.utils.vis import save_video_from_frames
 import supervision as sv
 import scipy.ndimage as ndi 
 from conceptgraph.utils.vlm import get_obj_captions_from_image_gpt4v, get_obj_rel_from_image_gpt4v, vlm_extract_object_captions
@@ -20,47 +21,6 @@ from omegaconf import OmegaConf
 import torch
 import numpy as np
 import time
-
-class Timer:
-    def __init__(self, heading = "", verbose = True):
-        self.verbose = verbose
-        if not self.verbose:
-            return
-        self.heading = heading
-
-    def __enter__(self):
-        if not self.verbose:
-            return self
-        self.start = time.time()
-        return self
-
-    def __exit__(self, *args):
-        if not self.verbose:
-            return
-        self.end = time.time()
-        self.interval = self.end - self.start
-        print(self.heading, self.interval)
-
-
-
-
-def prjson(input_json, indent=0):
-    """ Pretty print a json object """
-    if not isinstance(input_json, list):
-        input_json = [input_json]
-        
-    print("[")
-    for i, entry in enumerate(input_json):
-        print("  {")
-        for j, (key, value) in enumerate(entry.items()):
-            terminator = "," if j < len(entry) - 1 else ""
-            if isinstance(value, str):
-                formatted_value = value.replace("\\n", "\n").replace("\\t", "\t")
-                print('    "{}": "{}"{}'.format(key, formatted_value, terminator))
-            else:
-                print(f'    "{key}": {value}{terminator}')
-        print("  }" + ("," if i < len(input_json) - 1 else ""))
-    print("]")
 
 def cfg_to_dict(input_cfg):
     """ Convert a Hydra configuration object to a native Python dictionary,
@@ -103,19 +63,6 @@ def cfg_to_dict(input_cfg):
     check_serializability(serializable_cfg)
 
     return serializable_cfg
-
-def get_stream_data_out_path(dataset_root, scene_id, make_dir=True):
-    stream_data_out_path = Path(dataset_root) / scene_id
-    stream_rgb_path = stream_data_out_path / "rgb"
-    stream_depth_path = stream_data_out_path / "depth"
-    stream_poses_path = stream_data_out_path / "poses"
-    
-    if make_dir:
-        stream_rgb_path.mkdir(parents=True, exist_ok=True)
-        stream_depth_path.mkdir(parents=True, exist_ok=True)
-        stream_poses_path.mkdir(parents=True, exist_ok=True)
-        
-    return stream_rgb_path, stream_depth_path, stream_poses_path
 
 def get_exp_out_path(dataset_root, scene_id, exp_suffix, make_dir=True, exps_dir_name="exps"):
     exp_out_path = Path(dataset_root) / scene_id / exps_dir_name / f"{exp_suffix}"
@@ -489,24 +436,6 @@ def save_hydra_config(hydra_cfg, exp_out_path, is_detection_config=False):
         dict_to_dump = cfg_to_dict(hydra_cfg)
         json.dump(dict_to_dump, f, indent=2)
 
-def load_saved_hydra_json_config(exp_out_path):
-    with open(get_exp_config_save_path(exp_out_path), "r") as f:
-        return json.load(f)
-
-
-def prepare_detection_paths(dataset_root, scene_id, detections_exp_suffix, force_detection, output_base_path):
-    """
-    Prepare and return paths needed for detection output, creating directories as needed.
-    """
-    det_exp_path = get_exp_out_path(dataset_root, scene_id, detections_exp_suffix)
-    if force_detection:
-        det_vis_folder_path = get_vis_out_path(det_exp_path)
-        det_detections_folder_path = get_det_out_path(det_exp_path)
-        os.makedirs(det_vis_folder_path, exist_ok=True)
-        os.makedirs(det_detections_folder_path, exist_ok=True)
-        return det_exp_path, det_vis_folder_path, det_detections_folder_path
-    return det_exp_path
-
 def should_exit_early(file_path):
     try:
         with open(file_path, 'r') as file:
@@ -775,24 +704,6 @@ def save_pointcloud(exp_suffix, exp_out_path, cfg, objects, obj_classes, latest_
         print(f"Updated symlink to point to the latest point cloud save at {latest_pcd_path} to:\n{pcd_save_path}")
 
         
-def find_existing_image_path(base_path, extensions):
-    """
-    Checks for the existence of a file with the given base path and any of the provided extensions.
-    Returns the path of the first existing file found or None if no file is found.
-
-    Parameters:
-    - base_path: The base file path without the extension.
-    - extensions: A list of file extensions to check for.
-
-    Returns:
-    - Path of the existing file or None if no file exists.
-    """
-    for ext in extensions:
-        potential_path = base_path.with_suffix(ext)
-        if potential_path.exists():
-            return potential_path
-    return None
-
 def save_objects_for_frame(obj_all_frames_out_path, frame_idx, objects, obj_min_detections, adjusted_pose, color_path):
     save_path = obj_all_frames_out_path / f"{frame_idx:06d}.pkl.gz"
     filtered_objects = [obj for obj in objects if obj['num_detections'] >= obj_min_detections]
@@ -816,11 +727,6 @@ def add_info_to_image(image, frame_idx, num_objects, color_path):
     line_type = cv2.LINE_AA
     position = (10, image.shape[0] - 10)
     cv2.putText(image, frame_info_text, position, font, font_scale, color, thickness, line_type)
-        
-def save_video_from_frames(frames, exp_out_path, exp_suffix):
-    video_save_path = exp_out_path / (f"s_mapping_{exp_suffix}.mp4")
-    save_video_from_frames(frames, video_save_path, fps=10)
-    print(f"Save video to {video_save_path}")
         
 def vis_render_image(objects, obj_classes, obj_renderer, image_original_pil, adjusted_pose, frames, frame_idx, color_path, obj_min_detections, class_agnostic, debug_render, is_final_frame, exp_out_path, exp_suffix):
     filtered_objects = [
@@ -848,7 +754,9 @@ def vis_render_image(objects, obj_classes, obj_renderer, image_original_pil, adj
 
     if is_final_frame:
         # Save the video
-        save_video_from_frames(frames, exp_out_path, exp_suffix)
+        video_save_path = exp_out_path / f"s_mapping_{exp_suffix}.mp4"
+        save_video_from_frames(frames, video_save_path)
+        print(f"Save video to {video_save_path}")
 
 
 

@@ -1,15 +1,92 @@
 defaults:
-  - base
-  - base_mapping
-  # - replica
-  # - scannet
-  - scenediff
-  # - record3d
-  - sam
-  - classes
-  - logging_level
+  - override hydra/job_logging: custom_logging_format
   - _self_
 
+hydra:
+  verbose: true
+
+# ---- paths ----
+repo_root: /node_data/urp26su_dongwoo/concept-graphs-project/concept-graphs
+data_root: /node_data/urp26su_dongwoo/concept-graphs-project/Datasets
+
+use_wandb: !!bool False
+
+# dataset info
+start: 0
+end: -1
+image_height: null # if null, it will be determined by dataconfig
+image_width: null # if null, it will be determined by dataconfig
+
+periodically_save_pcd: !!bool False
+periodically_save_pcd_interval: 10
+
+# This json file controls an early exit feature for the mapping script. It is
+# periodically checked at every iteration of the loop within
+# 'rerun_realtime_mapping.py'. When the 'exit_early' entry is set to true, the
+# script will bypass its normal iterative processing loop and proceed directly
+# to its final frame processing and cleanup phase. This allows for a quick
+# termination of the mapping process, which can be useful in scenarios where
+# immediate results are preferred or when it's necessary to halt processing
+# due to external constraints. To trigger an early exit, manually edit this
+# file by changing the value of 'exit_early' from false to true. The change
+# will take effect at the next loop iteration.
+exit_early_file: ${repo_root}/conceptgraph/hydra_configs/early_exit.json
+
+device: cuda
+
+use_iou: !!bool True
+spatial_sim_type: overlap # "iou", "giou", "overlap"
+phys_bias: 0.0
+match_method: "sim_sum" # "sep_thresh", "sim_sum"
+# Only when match_method=="sep_thresh"
+semantic_threshold: 0.5
+physical_threshold: 0.5
+# Only when match_method=="sim_sum"
+sim_threshold: 1.2
+
+# For contain_number
+use_contain_number: !!bool False
+contain_area_thresh: 0.95
+contain_mismatch_penalty: 0.5
+
+# Selection criteria on the 2D masks
+mask_area_threshold: 25 # mask with pixel area less than this will be skipped
+mask_conf_threshold: 0.25 # mask with lower confidence score will be skipped
+max_bbox_area_ratio: null # boxes with larger areas than this will be skipped
+
+min_points_threshold: 16 # projected and sampled pcd with less points will be skipped
+
+# For merge_overlap_objects() function
+merge_overlap_thresh: 0.7      # -1 means do not perform the merge_overlap_objects()
+merge_visual_sim_thresh: 0.7   # Merge only if the visual similarity is larger
+merge_text_sim_thresh: 0.7     # Merge only if the text cosine sim is larger
+
+# Output point cloud
+save_pcd: !!bool True
+save_json: !!bool True
+save_suffix: exp_streamlined_mapping_base_suffix
+
+class_agnostic: !!bool False   # If set, the color will be set by instance, rather than most common class
+
+latest_pcd_filepath: ${repo_root}/latest_pcd_save
+
+# SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
+# ScanNet-style RGB-D sequences by conceptgraph/dataset/scenediff_to_conceptgraph.py.
+# Each SceneDiff pair produces two ConceptGraph scenes sharing one Pi3-estimated
+# coordinate frame: <pair_name>_before and <pair_name>_after.
+dataset_root: ${data_root}/scenediff
+scene_id: living_room_17_living_room_18_before
+dataset_config: ${repo_root}/conceptgraph/dataset/dataconfigs/scenediff/${scene_id}.yaml
+render_camera_path: ${repo_root}/conceptgraph/dataset/dataconfigs/replica_room0.json
+
+sam_variant: sam # sam
+sam_encoder_version: "vit_h"
+sam_checkpoint_path: /node_data/urp26su_dongwoo/repos/new_segment_anything/Grounded-Segment-Anything/sam_vit_h_4b8939.pth
+mobile_sam_path: /node_data/urp26su_dongwoo/repos/new_segment_anything/Grounded-Segment-Anything/mobile_sam.pt
+
+classes_file: ${repo_root}/conceptgraph/scannet200_classes.txt
+bg_classes: ["wall", "floor", "ceiling"]
+skip_bg: !!bool False
 
 # Name of the folder (under <dataset_root>/<scene_id>/) that experiment
 # outputs are organized into, i.e. output paths are
@@ -45,8 +122,8 @@ save_objects_all_frames: !!bool False
 downsample_voxel_size: 0.01
 obj_pcd_max_points: 5000
 
-debug_render: !!bool False
-vis_render: !!bool False
+debug_render: !!bool False     # If True, the vis.run() will be called and used for debugging
+vis_render: !!bool False       # If True, the objects will be rendered to a video.
 
 denoise_interval: 5           # Run DBSCAN every k frame. This operation is heavy
 filter_interval: 5            # Filter objects that have too few associations or are too small
@@ -72,11 +149,3 @@ save_scenegraph_viz: !!bool True
 # not per-frame): saved as <exp_out_path>/scenegraph_full.png once mapping
 # finishes. Requires save_json (reads back the just-saved obj_json/edge_json).
 save_scenegraph_full: !!bool True
-
-# hydra:
-#   verbose: true
-  # mode: MULTIRUN
-  # sweeper:
-  #   params:
-  #     downsample_voxel_size: 0.025, 0.01, 0.001, 0.001
-  #     obj_pcd_max_points: 5000, 10000, 100000, 100000
