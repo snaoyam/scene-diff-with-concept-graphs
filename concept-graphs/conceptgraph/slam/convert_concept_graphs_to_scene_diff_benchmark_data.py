@@ -25,6 +25,11 @@ frame_idx values are ConceptGraph's own image_idx (already resampled the same wa
 scene_diff/data/scenediff_to_conceptgraph.py resampled the source video), so they line
 up with evaluate_multiview.py's GT frame indices as long as the same --resample_rate is
 passed to it.
+
+Also writes a debug image, benchmark_data/moved_objects_pointcloud.png: a top-down 2D
+projection of the full 3D point cloud (context in gray) with each moved object's
+before/after points (orange/blue) and an arrow between their centroids -- see
+save_moved_objects_pointcloud_debug_image().
 """
 import argparse
 import gzip
@@ -32,9 +37,14 @@ import pickle
 from pathlib import Path
 
 import hydra
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 from pycocotools import mask as mask_utils
 from scipy.optimize import linear_sum_assignment
+
+AXIS_NAMES = ["X", "Y", "Z"]
 
 
 def _load_rerun_mapping_config() -> dict:
@@ -158,6 +168,61 @@ def build_object_masks(before_objs, after_objs, matches, unmatched_before, unmat
     return object_masks, hw
 
 
+def save_moved_objects_pointcloud_debug_image(pair_name, before_objs, after_objs, moved_pairs, out_path: Path):
+    """2D 투영 디버그 이미지: 전체 3D 점군을 회색 배경으로 깔고, moved_pairs로 판정된
+    물체들의 이동 전(주황)/이동 후(파랑) 점과 중심 간 화살표를 표시한다. up-axis는
+    코드베이스 어디에도 문서화돼 있지 않으므로, 전체 점의 bbox extent가 가장 작은 축을
+    up으로 간주해 매 실행마다 자동 추정하고 제목에 명시한다."""
+    if not moved_pairs:
+        print(f"[{pair_name}] no moved objects -- skipping pointcloud debug image")
+        return
+
+    all_points = np.concatenate(
+        [o["pcd_np"] for o in before_objs + after_objs if o["pcd_np"].size > 0], axis=0
+    )
+    extent = all_points.max(axis=0) - all_points.min(axis=0)
+    up_axis = int(np.argmin(extent))
+    plane_axes = [i for i in range(3) if i != up_axis]
+
+    moved_before_idx = {bi for bi, _, _ in moved_pairs}
+    moved_after_idx = {ai for _, ai, _ in moved_pairs}
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+
+    context_points = [
+        o["pcd_np"][:, plane_axes] for i, o in enumerate(before_objs) if i not in moved_before_idx
+    ] + [
+        o["pcd_np"][:, plane_axes] for i, o in enumerate(after_objs) if i not in moved_after_idx
+    ]
+    if context_points:
+        ctx = np.concatenate(context_points, axis=0)
+        ax.scatter(ctx[:, 0], ctx[:, 1], s=2, c="lightgray", alpha=0.3, label="context (unchanged)")
+
+    for before_idx, after_idx, dist in moved_pairs:
+        before_pts = before_objs[before_idx]["pcd_np"][:, plane_axes]
+        after_pts = after_objs[after_idx]["pcd_np"][:, plane_axes]
+        ax.scatter(before_pts[:, 0], before_pts[:, 1], s=6, c="orange", alpha=0.7)
+        ax.scatter(after_pts[:, 0], after_pts[:, 1], s=6, c="blue", alpha=0.7)
+        before_c, after_c = before_pts.mean(axis=0), after_pts.mean(axis=0)
+        ax.annotate("", xy=after_c, xytext=before_c,
+                    arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
+        ax.text(after_c[0], after_c[1], f" #{before_idx}->{after_idx} ({dist:.2f}m)", fontsize=8)
+
+    ax.scatter([], [], s=20, c="orange", label="moved: before")
+    ax.scatter([], [], s=20, c="blue", label="moved: after")
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel(AXIS_NAMES[plane_axes[0]])
+    ax.set_ylabel(AXIS_NAMES[plane_axes[1]])
+    ax.set_title(f"{pair_name} -- moved objects (up-axis auto-detected: {AXIS_NAMES[up_axis]})")
+    ax.legend(loc="upper right", fontsize=8)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"[{pair_name}] moved-objects pointcloud debug image -> {out_path}")
+
+
 def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, exp_suffix: str,
             max_match_distance: float, moved_threshold: float, visual_weight: float):
     before_objs = load_objects(concept_graphs_dir, "before", exp_suffix)
@@ -183,11 +248,16 @@ def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, 
     with open(out_path, "wb") as f:
         pickle.dump(result, f)
 
-    n_moved = sum(1 for _, _, d in matches if d > moved_threshold)
+    moved_pairs = [(bi, ai, d) for bi, ai, d in matches if d > moved_threshold]
     print(
         f"[{pair_name}] before={len(before_objs)} after={len(after_objs)} "
-        f"moved={n_moved} removed={len(unmatched_before)} added={len(unmatched_after)} "
+        f"moved={len(moved_pairs)} removed={len(unmatched_before)} added={len(unmatched_after)} "
         f"-> {out_path}"
+    )
+
+    save_moved_objects_pointcloud_debug_image(
+        pair_name, before_objs, after_objs, moved_pairs,
+        benchmark_data_dir / "moved_objects_pointcloud.png",
     )
 
 
