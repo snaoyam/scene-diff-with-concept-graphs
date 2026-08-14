@@ -35,9 +35,11 @@ import numpy as np
 from pycocotools import mask as mask_utils
 from scipy.optimize import linear_sum_assignment
 
+import output_paths
 
-def load_objects(concept_graphs_root: Path, pair_name: str, variant: str, exp_suffix: str):
-    pcd_path = concept_graphs_root / pair_name / variant / "exps" / exp_suffix / f"pcd_{exp_suffix}.pkl.gz"
+
+def load_objects(concept_graphs_dir: Path, variant: str, exp_suffix: str):
+    pcd_path = concept_graphs_dir / variant / "exps" / exp_suffix / f"pcd_{exp_suffix}.pkl.gz"
     with gzip.open(pcd_path, "rb") as f:
         data = pickle.load(f)
     objects = [obj for obj in data["objects"] if not obj.get("is_background", False)]
@@ -145,10 +147,10 @@ def build_object_masks(before_objs, after_objs, matches, unmatched_before, unmat
     return object_masks, hw
 
 
-def convert(pair_name: str, concept_graphs_root: Path, output_root: Path, exp_suffix: str,
+def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, exp_suffix: str,
             max_match_distance: float, moved_threshold: float, visual_weight: float):
-    before_objs = load_objects(concept_graphs_root, pair_name, "before", exp_suffix)
-    after_objs = load_objects(concept_graphs_root, pair_name, "after", exp_suffix)
+    before_objs = load_objects(concept_graphs_dir, "before", exp_suffix)
+    after_objs = load_objects(concept_graphs_dir, "after", exp_suffix)
 
     matches, unmatched_before, unmatched_after = match_objects(
         before_objs, after_objs, max_match_distance, visual_weight
@@ -165,7 +167,7 @@ def convert(pair_name: str, concept_graphs_root: Path, output_root: Path, exp_su
     H, W = hw
     result = {"H": int(H), "W": int(W), **object_masks}
 
-    out_path = output_root / pair_name / "object_masks.pkl"
+    out_path = benchmark_data_dir / "object_masks.pkl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "wb") as f:
         pickle.dump(result, f)
@@ -181,12 +183,6 @@ def convert(pair_name: str, concept_graphs_root: Path, output_root: Path, exp_su
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--pair_name", required=True)
-    parser.add_argument("--concept_graphs_root", type=Path, required=True,
-                         help="e.g. outputs/concept_graphs (contains <pair>/{before,after}/exps/<suffix>/)")
-    parser.add_argument("--output_root", type=Path, required=True,
-                         help="e.g. outputs/benchmark_data (object_masks.pkl written to <output_root>/<pair>/)")
-    parser.add_argument("--exp_suffix", default="r_mapping_pilot",
-                         help="Must match exp_suffix in conceptgraph/hydra_configs/rerun_realtime_mapping.yaml")
     parser.add_argument("--max_match_distance", type=float, default=1.5,
                          help="Max 3D centroid distance (meters) to even consider two objects the same (else always removed+added)")
     parser.add_argument("--moved_threshold", type=float, default=0.3,
@@ -197,9 +193,9 @@ def main():
 
     convert(
         pair_name=args.pair_name,
-        concept_graphs_root=args.concept_graphs_root,
-        output_root=args.output_root,
-        exp_suffix=args.exp_suffix,
+        concept_graphs_dir=output_paths.concept_graphs_dir(args.pair_name),
+        benchmark_data_dir=output_paths.benchmark_data_dir(args.pair_name),
+        exp_suffix=output_paths.get_exp_suffix(),
         max_match_distance=args.max_match_distance,
         moved_threshold=args.moved_threshold,
         visual_weight=args.visual_weight,

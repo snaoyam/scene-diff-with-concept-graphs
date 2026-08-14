@@ -2,6 +2,7 @@ import json
 from openai import OpenAI
 import os
 import base64
+from pathlib import Path
 
 from PIL import Image
 import numpy as np
@@ -260,6 +261,16 @@ def vlm_extract_object_captions(text: str):
         print("No list of objects found in the text.")
         return []
     
+def save_vlm_response_for_debug(image_path: str, response_text: str):
+    """Debug aid: dump the raw VLM response text next to the annotated image it was
+    generated from, so relation extraction failures can be inspected after a run."""
+    response_path = Path(image_path).with_name(Path(image_path).stem + "_relations_response.txt")
+    try:
+        response_path.write_text(response_text or "")
+    except OSError as e:
+        print(f"Could not save VLM response to {response_path}: {e}")
+
+
 def get_obj_rel_from_image_gpt4v(client: OpenAI, image_path: str, label_list: list):
     # Getting the base64 string
     base64_image = encode_image_for_openai(image_path)
@@ -299,12 +310,15 @@ def get_obj_rel_from_image_gpt4v(client: OpenAI, image_path: str, label_list: li
         
         vlm_answer_str = response.choices[0].message.content
         # print(f"Line 113, vlm_answer_str: {vlm_answer_str}")
-        
+
+        save_vlm_response_for_debug(image_path, vlm_answer_str)
+
         vlm_answer = extract_list_of_tuples(vlm_answer_str)
 
     except Exception as e:
         print(f"An error occurred: {str(e)}")
         print(f"Setting vlm_answer to an empty list.")
+        save_vlm_response_for_debug(image_path, f"ERROR: {e}")
         vlm_answer = []
     # print(f"Line 68, user_query: {user_query}")
     # print(f"Line 97, vlm_answer: {vlm_answer}")

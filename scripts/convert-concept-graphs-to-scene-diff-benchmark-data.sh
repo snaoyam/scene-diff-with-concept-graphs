@@ -8,15 +8,12 @@
 #   ./convert-concept-graphs-to-scene-diff-benchmark-data.sh <pair_name>
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUTPUTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/outputs"
 
 convert_concept_graphs_to_scene_diff_benchmark_data() {
     local pair_name="$1"
     conda run -n scene_diff --no-capture-output \
         python "$SCRIPT_DIR/convert_concept_graphs_to_scene_diff_benchmark_data.py" \
-            --pair_name "$pair_name" \
-            --concept_graphs_root "$OUTPUTS_DIR/concept_graphs" \
-            --output_root "$OUTPUTS_DIR/benchmark_data"
+            --pair_name "$pair_name"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

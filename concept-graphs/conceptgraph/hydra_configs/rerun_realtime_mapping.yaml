@@ -9,10 +9,14 @@ hydra:
 repo_root: /node_data/urp26su_dongwoo/concept-graphs-project/concept-graphs
 data_root: /node_data/urp26su_dongwoo/concept-graphs-project/Datasets
 
-# Where mapping experiment outputs (obj_json, edge_json, pcd, detections/, ...) are
-# written. Kept separate from dataset_root, which is read-only input data -- outputs
-# always land under the project-level outputs/ directory, not inside Datasets/.
-output_root: ${repo_root}/../outputs/concept_graphs
+# Shared base for every stage's output, kept separate from dataset_root (which is
+# read-only input data). Each SceneDiff pair gets its own outputs/<pair>/ folder, with
+# concept_graphs/ (this script's obj_json, edge_json, pcd, detections/, ...),
+# benchmark_data/ (scripts/convert_concept_graphs_to_scene_diff_benchmark_data.py's
+# object_masks.pkl), and benchmark_result/ (scripts/run_scene_diff_benchmark.py's
+# eval_result.txt) all nested underneath it -- see scripts/output_paths.py, which reads
+# this same value for the latter two stages.
+output_root: ${repo_root}/../outputs
 
 use_wandb: !!bool False
 
@@ -123,7 +127,7 @@ edge_prune_window: 25
 # being far apart in 3D. An edge is dropped if the 3D gap between the two
 # objects' bounding boxes exceeds this factor times their combined size.
 # Lower = stricter (fewer, more locally-plausible edges); <= 0 disables the check.
-edge_max_gap_factor: 1.5
+edge_max_gap_factor: -1
 
 stride: 1 # scenediff frames are already sparsely sampled during preprocessing
 exp_suffix: r_mapping_pilot # helpful label to identify your mapping experiment

@@ -17,7 +17,10 @@ keys) uses. Verified empirically at 10 (see plan/commit notes) -- override with
 """
 import argparse
 import sys
+import tempfile
 from pathlib import Path
+
+import output_paths
 
 SCENE_DIFF_DIR = Path("/node_data/urp26su_dongwoo/concept-graphs-project/scene_diff")
 
@@ -25,49 +28,54 @@ sys.path.insert(0, str(SCENE_DIFF_DIR / "scripts"))
 import evaluate_multiview  # noqa: E402
 
 
-def run_benchmark(pair_name: str, benchmark_data_root: Path, output_root: Path, resample_rate: int):
-    pred_path = benchmark_data_root / pair_name / "object_masks.pkl"
+def run_benchmark(pair_name: str, resample_rate: int):
+    benchmark_data_dir = output_paths.benchmark_data_dir(pair_name)
+    pred_path = benchmark_data_dir / "object_masks.pkl"
     if not pred_path.exists():
         raise FileNotFoundError(
             f"{pred_path} not found -- run step 2 "
             "(convert-concept-graphs-to-scene-diff-benchmark-data.sh) for this pair first."
         )
 
-    args = argparse.Namespace(
-        gt_dir=str(SCENE_DIFF_DIR / "data" / "scenediff_benchmark" / "data"),
-        pred_dir=str(benchmark_data_root),
-        video_dir=str(SCENE_DIFF_DIR / "data" / "scenediff_benchmark" / "data"),
-        resample_rate=resample_rate,
-        max_length=1024,
-        iou_threshold=0.5,
-        duplicate_match_threshold=1,
-        per_frame_duplicate_match_threshold=1,
-        mask_background=False,
-        crop=False,
-    )
+    result_dir = output_paths.benchmark_result_dir(pair_name)
+    result_dir.mkdir(parents=True, exist_ok=True)
+    result_path = result_dir / "eval_result.txt"
 
-    result_path = output_root / pair_name / "eval_result.txt"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
+    # evaluate_multiview.py expects a flat <pred_dir>/<scene_name>/object_masks.pkl
+    # layout (get_prediction_dir), but our own outputs/ nests object_masks.pkl one
+    # level differently now (outputs/<pair>/benchmark_data/object_masks.pkl, no
+    # further <pair>-named subfolder inside benchmark_data/). Bridge the two with a
+    # single throwaway symlink rather than touching the official evaluator.
+    with tempfile.TemporaryDirectory() as tmp_pred_root:
+        (Path(tmp_pred_root) / pair_name).symlink_to(benchmark_data_dir, target_is_directory=True)
 
-    evaluate_multiview.evaluate_all_scenes([pair_name], args, str(result_path), visualize=False)
+        args = argparse.Namespace(
+            gt_dir=str(SCENE_DIFF_DIR / "data" / "scenediff_benchmark" / "data"),
+            pred_dir=tmp_pred_root,
+            video_dir=str(SCENE_DIFF_DIR / "data" / "scenediff_benchmark" / "data"),
+            resample_rate=resample_rate,
+            max_length=1024,
+            iou_threshold=0.5,
+            duplicate_match_threshold=1,
+            per_frame_duplicate_match_threshold=1,
+            mask_background=False,
+            crop=False,
+        )
+
+        evaluate_multiview.evaluate_all_scenes([pair_name], args, str(result_path), visualize=False)
+
     print(f"[{pair_name}] benchmark result -> {result_path}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--pair_name", required=True)
-    parser.add_argument("--benchmark_data_root", type=Path, required=True,
-                         help="e.g. outputs/benchmark_data (reads <root>/<pair>/object_masks.pkl)")
-    parser.add_argument("--output_root", type=Path, required=True,
-                         help="e.g. outputs/benchmark_result (writes <root>/<pair>/eval_result.txt)")
     parser.add_argument("--resample_rate", type=int, default=10,
                          help="Must match the resample rate scenediff_to_conceptgraph.py used for this pair")
     args = parser.parse_args()
 
     run_benchmark(
         pair_name=args.pair_name,
-        benchmark_data_root=args.benchmark_data_root,
-        output_root=args.output_root,
         resample_rate=args.resample_rate,
     )
 

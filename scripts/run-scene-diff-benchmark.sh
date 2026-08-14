@@ -8,15 +8,12 @@
 #   ./run-scene-diff-benchmark.sh <pair_name>
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUTPUTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/outputs"
 
 run_scene_diff_benchmark() {
     local pair_name="$1"
     conda run -n scene_diff --no-capture-output \
         python "$SCRIPT_DIR/run_scene_diff_benchmark.py" \
-            --pair_name "$pair_name" \
-            --benchmark_data_root "$OUTPUTS_DIR/benchmark_data" \
-            --output_root "$OUTPUTS_DIR/benchmark_result"
+            --pair_name "$pair_name"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

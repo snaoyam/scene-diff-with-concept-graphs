@@ -121,7 +121,15 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     tracker = MappingTracker()
     tracker.reset()
     DenoisingTracker().reset()
-    exp_out_path = get_exp_out_path(cfg.output_root, cfg.scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
+
+    # Output paths nest as outputs/<scene_pair>/concept_graphs/<scene_variant>/... so
+    # that scripts/output_paths.py's benchmark_data/benchmark_result siblings land
+    # under the same outputs/<scene_pair>/ folder -- distinct from cfg.scene_id (used
+    # everywhere else below for dataset loading, wandb naming, etc), which has no
+    # "concept_graphs" segment.
+    concept_graphs_scene_id = f"{cfg.scene_pair}/concept_graphs/{cfg.scene_variant}"
+
+    exp_out_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
     exp_out_path.mkdir(exist_ok=True, parents=True)
 
     owandb = OptionalWandB()
@@ -161,10 +169,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         )
         frames = []
     # output folder for this mapping experiment
-    exp_out_path = get_exp_out_path(cfg.output_root, cfg.scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
+    exp_out_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
 
     # output folder of the detections experiment to use
-    det_exp_path = get_exp_out_path(cfg.output_root, cfg.scene_id, cfg.detections_exp_suffix, make_dir=False, exps_dir_name=cfg.exps_dir_name)
+    det_exp_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, cfg.detections_exp_suffix, make_dir=False, exps_dir_name=cfg.exps_dir_name)
 
     # we need to make sure to use the same classes as the ones used in the detections
     detections_exp_cfg = cfg_to_dict(cfg)
