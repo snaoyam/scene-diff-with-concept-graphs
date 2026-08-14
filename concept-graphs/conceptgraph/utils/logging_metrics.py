@@ -16,20 +16,23 @@ class MappingTracker:
 
     def __init__(self):
         if not self.__initialized:
-            self.curr_frame_idx = 0
-            self.curr_object_count = 0
-            self.total_detections = 0
-            self.total_objects = 0
-            self.total_merges = 0
-            self.merge_list = []
-            self.object_dict = {}
-            self.curr_class_count = defaultdict(int)
-            self.total_object_count = 0
-            self.prev_obj_names = []
-            self.prev_bbox_names = []
-            self.brand_new_counter = 0
+            self.reset()
+            self.__initialized = True
 
-            
+    def reset(self):
+        self.curr_frame_idx = 0
+        self.curr_object_count = 0
+        self.total_detections = 0
+        self.total_objects = 0
+        self.total_merges = 0
+        self.merge_list = []
+        self.object_dict = {}
+        self.curr_class_count = defaultdict(int)
+        self.total_object_count = 0
+        self.prev_obj_names = []
+        self.prev_bbox_names = []
+        self.brand_new_counter = 0
+
     def increment_total_detections(self, count):
         self.total_detections += count
     def get_total_detections(self):
@@ -64,25 +67,28 @@ class DenoisingTracker:
 
     def __init__(self):
         if not self.__initialized:
-            self.total_operations = 0
-            self.efficiency = defaultdict(int)
-            self.object_stats = defaultdict(self._default_object_stats)
-            # Initialize bucket_stats properly
-            self.bucket_stats = defaultdict(self._default_bucket_stats)
-            self.size_buckets = self._define_size_buckets()
-            self.max_bucket = 0
-            self.efficiency_keys = [
-                ("No Change", 0),  # You might want to keep this as is or change to a preferred term
-                ("<1%", 1),
-                ("<5%", 5),
-                ("<10%", 10),
-                ("<30%", 30),
-                ("<50%", 50),
-                ("<70%", 70),
-                ("<90%", 90),
-                ("<100%", 100),
-            ]
+            self.reset()
             self.__initialized = True
+
+    def reset(self):
+        self.total_operations = 0
+        self.efficiency = defaultdict(int)
+        self.object_stats = defaultdict(self._default_object_stats)
+        # Initialize bucket_stats properly
+        self.bucket_stats = defaultdict(self._default_bucket_stats)
+        self.size_buckets = self._define_size_buckets()
+        self.max_bucket = 0
+        self.efficiency_keys = [
+            ("No Change", 0),  # You might want to keep this as is or change to a preferred term
+            ("<1%", 1),
+            ("<5%", 5),
+            ("<10%", 10),
+            ("<30%", 30),
+            ("<50%", 50),
+            ("<70%", 70),
+            ("<90%", 90),
+            ("<100%", 100),
+        ]
 
     @staticmethod
     def _define_size_buckets():

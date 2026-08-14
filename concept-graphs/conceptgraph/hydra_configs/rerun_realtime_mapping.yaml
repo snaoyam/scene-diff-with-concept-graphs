@@ -73,9 +73,16 @@ latest_pcd_filepath: ${repo_root}/latest_pcd_save
 # SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
 # ScanNet-style RGB-D sequences by conceptgraph/dataset/scenediff_to_conceptgraph.py.
 # Each SceneDiff pair produces two ConceptGraph scenes sharing one Pi3-estimated
-# coordinate frame: <pair_name>_before and <pair_name>_after.
+# coordinate frame: <pair_name>/before and <pair_name>/after.
 dataset_root: ${data_root}/scenediff
-scene_id: living_room_17_living_room_18_before
+
+# SceneDiff pair name, without a before/after suffix. rerun_realtime_mapping.py
+# runs the whole mapping pipeline twice per execution, once per scene_variant,
+# overriding scene_variant on an independent config copy each time so the two
+# ConceptGraphs are built without sharing any scene data.
+scene_pair: living_room_17_living_room_18
+scene_variant: before # overridden per run by rerun_realtime_mapping.py; valid values: "before", "after"
+scene_id: ${scene_pair}/${scene_variant}
 dataset_config: ${repo_root}/conceptgraph/dataset/dataconfigs/scenediff/${scene_id}.yaml
 render_camera_path: ${repo_root}/conceptgraph/dataset/dataconfigs/replica_room0.json
 

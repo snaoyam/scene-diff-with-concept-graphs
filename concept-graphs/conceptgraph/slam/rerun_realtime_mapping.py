@@ -104,14 +104,31 @@ def main(cfg : DictConfig):
     # PIL quiet without touching the global verbose setting.
     logging.getLogger("PIL").setLevel(logging.INFO)
 
+    # Build the two ConceptGraphs (before/after) for this SceneDiff pair in one
+    # run. Each variant gets its own deep copy of cfg so nothing one variant
+    # mutates (process_cfg bakes dataset_config/dataset_root into concrete
+    # Path objects) leaks into the other. Detection models are the one thing
+    # intentionally shared across variants -- they're stateless inference
+    # weights, not scene data.
+    shared_models = None
+    for variant in ("before", "after"):
+        variant_cfg = copy.deepcopy(cfg)
+        variant_cfg.scene_variant = variant
+        shared_models = run_mapping_for_scene(variant_cfg, shared_models)
+
+
+def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     tracker = MappingTracker()
+    tracker.reset()
+    DenoisingTracker().reset()
     exp_out_path = get_exp_out_path(cfg.dataset_root, cfg.scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
     exp_out_path.mkdir(exist_ok=True, parents=True)
 
     owandb = OptionalWandB()
     owandb.set_use_wandb(cfg.use_wandb)
-    owandb.init(project="concept-graphs", 
+    owandb.init(project="concept-graphs",
             #    entity="concept-graphs",
+                name=cfg.scene_id.replace("/", "_"),
                 config=cfg_to_dict(cfg),
                )
     cfg = process_cfg(cfg)
@@ -166,15 +183,19 @@ def main(cfg : DictConfig):
         print("\n".join(["Running detections..."] * 10))
         det_exp_path.mkdir(parents=True, exist_ok=True)
 
-        ## Initialize the detection models
-        detection_model = measure_time(YOLO)('yolov8l-world.pt')
-        sam_predictor = SAM('sam_l.pt') # SAM('mobile_sam.pt') # UltraLytics SAM
-        # sam_predictor = measure_time(get_sam_predictor)(cfg) # Normal SAM
-        clip_model, _, clip_preprocess = open_clip.create_model_and_transforms(
-            "ViT-H-14", "laion2b_s32b_b79k"
-        )
-        clip_model = clip_model.to(cfg.device)
-        clip_tokenizer = open_clip.get_tokenizer("ViT-H-14")
+        ## Initialize the detection models, reusing them across scene variants if already loaded
+        if shared_models is None:
+            detection_model = measure_time(YOLO)('yolov8l-world.pt')
+            sam_predictor = SAM('sam_l.pt') # SAM('mobile_sam.pt') # UltraLytics SAM
+            # sam_predictor = measure_time(get_sam_predictor)(cfg) # Normal SAM
+            clip_model, _, clip_preprocess = open_clip.create_model_and_transforms(
+                "ViT-H-14", "laion2b_s32b_b79k"
+            )
+            clip_model = clip_model.to(cfg.device)
+            clip_tokenizer = open_clip.get_tokenizer("ViT-H-14")
+            shared_models = (detection_model, sam_predictor, clip_model, clip_preprocess, clip_tokenizer)
+        else:
+            detection_model, sam_predictor, clip_model, clip_preprocess, clip_tokenizer = shared_models
 
         # Set the classes for the detection model
         detection_model.set_classes(obj_classes.get_classes_arr())
@@ -692,6 +713,8 @@ def main(cfg : DictConfig):
             save_video_detections(det_exp_path)
 
     owandb.finish()
+
+    return shared_models
 
 if __name__ == "__main__":
     main()
