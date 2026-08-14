@@ -9,8 +9,10 @@ SCENE_PAIRS=($(python -c "import json; d=json.load(open('$JSON_FILE')); print('\
 # SCENE_PAIRS=("${SCENE_PAIRS[@]:0}")
 
 SUB_SCENE_PAIRS=()
-for (( i=0; i<${#SCENE_PAIRS[@]}; i+=5 )); do
-    SUB_SCENE_PAIRS+=("${SCENE_PAIRS[i]}")
+for offset in 0 1 2 3; do
+    for (( i=offset; i<${#SCENE_PAIRS[@]}; i+=4 )); do
+        SUB_SCENE_PAIRS+=("${SCENE_PAIRS[i]}")
+    done
 done
 SCENE_PAIRS=("${SUB_SCENE_PAIRS[@]}")
 

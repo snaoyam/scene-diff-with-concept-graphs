@@ -206,7 +206,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             sam_predictor = SAM('sam_l.pt') # SAM('mobile_sam.pt') # UltraLytics SAM
             # sam_predictor = measure_time(get_sam_predictor)(cfg) # Normal SAM
             clip_model, _, clip_preprocess = open_clip.create_model_and_transforms(
-                "ViT-H-14", "laion2b_s32b_b79k"
+                "ViT-H-14", "laion2b_s32b_b79k", precision="fp16"
             )
             clip_model = clip_model.to(cfg.device)
             clip_tokenizer = open_clip.get_tokenizer("ViT-H-14")
@@ -214,8 +214,27 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         else:
             detection_model, sam_predictor, clip_model, clip_preprocess, clip_tokenizer = shared_models
 
-        # Set the classes for the detection model
-        detection_model.set_classes(obj_classes.get_classes_arr())
+        # Set the classes for the detection model. cache_clip_model=False: the cached
+        # self.clip_model (default cache_clip_model=True) is a real submodule of
+        # detection_model.model, so later predict(..., quantize=16) calls -- which run
+        # model.half() on the whole model to enable fp16 inference -- flip its LayerNorm
+        # to fp16 too, breaking CLIP's fp16/fp32 mixed-precision design. The "before"
+        # variant's frame loop calls predict() many times before the "after" variant
+        # reuses this shared detection_model and calls set_classes() again, so the second
+        # call would hit the now-corrupted cached clip_model and crash with
+        # "RuntimeError: expected scalar type Float but found Half". Rebuilding a fresh,
+        # uncached CLIP text encoder here (cheap: once per variant) avoids that.
+        # detection_model.set_classes() (the YOLO wrapper) doesn't forward
+        # cache_clip_model -- only the underlying WorldModel.set_classes() accepts it --
+        # so call that directly and replicate the wrapper's own post-processing
+        # (background-token removal, names bookkeeping) ourselves.
+        detection_classes = obj_classes.get_classes_arr()
+        detection_model.model.set_classes(detection_classes, cache_clip_model=False)
+        if " " in detection_classes:
+            detection_classes.remove(" ")
+        detection_model.model.names = detection_classes
+        if detection_model.predictor:
+            detection_model.predictor.model.names = detection_classes
     else:
         print("\n".join(["NOT Running detections..."] * 10))
 
@@ -275,7 +294,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
             # Do initial object detection
-            results = detection_model.predict(color_path, conf=0.1, verbose=False)
+            results = detection_model.predict(color_path, conf=0.1, verbose=False, quantize=16)
             confidences = results[0].boxes.conf.cpu().numpy()
             detection_class_ids = results[0].boxes.cls.cpu().numpy().astype(int)
             detection_class_labels = [f"{obj_classes.get_classes_arr()[class_id]} {class_idx}" for class_idx, class_id in enumerate(detection_class_ids)]
@@ -286,7 +305,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             # Get Masks Using SAM or MobileSAM
             # UltraLytics SAM
             if xyxy_tensor.numel() != 0:
-                sam_out = sam_predictor.predict(color_path, bboxes=xyxy_tensor, verbose=False)
+                sam_out = sam_predictor.predict(color_path, bboxes=xyxy_tensor, verbose=False, quantize=16)
                 masks_tensor = sam_out[0].masks.data
 
                 masks_np = masks_tensor.cpu().numpy()

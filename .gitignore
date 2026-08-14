@@ -17,9 +17,11 @@
 /concept-graphs/conceptgraph/dataset/dataconfigs/scenediff/
 
 *.pth
+*.pt
 
 .claude*
 /.trash/
 /benchmark_output/*
 /terminal-output/*
 /outputs*/
+/hydra-logs/

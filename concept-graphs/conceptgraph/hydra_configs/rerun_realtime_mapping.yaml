@@ -4,6 +4,8 @@ defaults:
 
 hydra:
   verbose: true
+  run:
+    dir: /node_data/urp26su_dongwoo/concept-graphs-project/hydra-logs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 # ---- paths ----
 repo_root: /node_data/urp26su_dongwoo/concept-graphs-project/concept-graphs

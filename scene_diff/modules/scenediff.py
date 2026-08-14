@@ -341,16 +341,19 @@ class SceneDiff:
         from torch_scatter import scatter_mean
         
         n_images = images.shape[0]
-        feat_list = torch.zeros(n_images, H, W, self.feature_dim).to(self.device)
-        
+        # Accumulate on CPU: scatter_mean below runs on CPU anyway, and keeping
+        # all n_images dense (H, W, feature_dim) feature maps on GPU at once
+        # (e.g. ~1.28 GiB per image at 518x518x1280) can exceed GPU memory.
+        feat_list = torch.zeros(n_images, H, W, self.feature_dim)
+
         for i in range(n_images):
             img_np = images[i].permute(1, 2, 0).cpu().numpy()
             feat = self.semantic_model.extract_features(img_np)
-            feat_list[i] = feat.permute(1, 2, 0)
-        
+            feat_list[i] = feat.permute(1, 2, 0).cpu()
+
         feat_flat = feat_list.view(-1, self.feature_dim)
         voxel_features = scatter_mean(
-            feat_flat.cpu(),
+            feat_flat,
             voxel_indices.cpu(),
             dim=0
         ).cuda()

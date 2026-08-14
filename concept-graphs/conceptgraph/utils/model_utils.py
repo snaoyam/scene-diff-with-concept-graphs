@@ -35,7 +35,9 @@ def compute_clip_features_batched(image, detections, clip_model, clip_preprocess
         image_crops.append(cropped_image)
 
     # Convert lists to batches
-    preprocessed_images_batch = torch.cat(preprocessed_images, dim=0).to(device)
+    # dtype=torch.float16 matches clip_model's precision="fp16" (open_clip's manual
+    # mixed-precision mode) -- encode_image() doesn't cast its input itself.
+    preprocessed_images_batch = torch.cat(preprocessed_images, dim=0).to(device, dtype=torch.float16)
     text_tokens_batch = clip_tokenizer(text_tokens).to(device)
 
     # Batch inference
