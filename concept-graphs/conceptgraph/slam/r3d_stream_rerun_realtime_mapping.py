@@ -26,30 +26,16 @@ from ultralytics import YOLO, SAM
 import supervision as sv
 
 # Local application/library specific imports
-from conceptgraph.utils.optional_rerun_wrapper import (
-    OptionalReRun, 
-    orr_log_annotated_image, 
-    orr_log_camera, 
-    orr_log_depth_image, 
-    orr_log_edges, 
-    orr_log_objs_pcd_and_bbox, 
-    orr_log_rgb_image, 
-    orr_log_vlm_image
-)
 from conceptgraph.utils.optional_wandb_wrapper import OptionalWandB
-from conceptgraph.utils.geometry import rotation_matrix_to_quaternion
 from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker
 from conceptgraph.utils.vlm import get_obj_rel_from_image_gpt4v, get_openai_client
 from conceptgraph.utils.ious import mask_subtract_contained
 from conceptgraph.utils.general_utils import (
-    ObjectClasses, 
-    find_existing_image_path, 
-    get_det_out_path, 
+    ObjectClasses,
+    get_det_out_path,
     get_exp_out_path,
-    get_stream_data_out_path, 
-    get_vlm_annotated_image_path, 
-    handle_rerun_saving, 
-    load_saved_detections, 
+    get_stream_data_out_path,
+    load_saved_detections,
     load_saved_hydra_json_config, 
     make_vlm_edges_and_captions, 
     measure_time, 
@@ -108,11 +94,6 @@ def main(cfg : DictConfig):
     app.connect_to_device(dev_idx=0)
     
     tracker = MappingTracker()
-    
-    orr = OptionalReRun()
-    orr.set_use_rerun(cfg.use_rerun)
-    orr.init("realtime_mapping")
-    orr.spawn()
 
     owandb = OptionalWandB()
     owandb.set_use_wandb(cfg.use_wandb)
@@ -155,8 +136,6 @@ def main(cfg : DictConfig):
     det_exp_vis_path = get_vis_out_path(det_exp_path)
     
     stream_rgb_path, stream_depth_path, stream_poses_path = get_stream_data_out_path(cfg.dataset_root, cfg.scene_id)
-    
-    prev_adjusted_pose = None
 
     if run_detections:
         print("\n".join(["Running detections..."] * 10))
@@ -194,7 +173,6 @@ def main(cfg : DictConfig):
     for frame_idx in trange(total_frames):
         tracker.curr_frame_idx = frame_idx
         counter+=1
-        orr.set_time_sequence("frame", frame_idx)
 
         # Check if we should exit early only if the flag hasn't been set yet
         if not exit_early_flag and should_exit_early(cfg.exit_early_file):
@@ -241,10 +219,7 @@ def main(cfg : DictConfig):
         raw_gobs = None
         gobs = None # stands for grounded observations
         detections_path = det_exp_pkl_path / (color_path.stem + ".pkl.gz")
-        
-        vis_save_path_for_vlm = get_vlm_annotated_image_path(det_exp_vis_path, color_path)
-        vis_save_path_for_vlm_edges = get_vlm_annotated_image_path(det_exp_vis_path, color_path, w_edges=True)
-        
+
         if run_detections:
             results = None
             # opencv can't read Path objects...
@@ -336,14 +311,6 @@ def main(cfg : DictConfig):
 
         # Don't apply any transformation otherwise
         adjusted_pose = unt_pose
-        
-        prev_adjusted_pose = orr_log_camera(intrinsics, adjusted_pose, prev_adjusted_pose, cfg.image_width, cfg.image_height, frame_idx)
-        
-        orr_log_rgb_image(color_path)
-        orr_log_annotated_image(color_path, det_exp_vis_path)
-        orr_log_depth_image(depth_tensor)
-        orr_log_vlm_image(vis_save_path_for_vlm)
-        orr_log_vlm_image(vis_save_path_for_vlm_edges, label="w_edges")
 
         # resize the observation if needed
         resized_gobs = resize_gobs(raw_gobs, image_rgb)
@@ -504,9 +471,7 @@ def main(cfg : DictConfig):
                 device=cfg["device"],
                 do_edges=False, # false for now, otherwise use cfg["make_edges"],
                 map_edges=map_edges
-            )   
-        orr_log_objs_pcd_and_bbox(objects, obj_classes)
-        # orr_log_edges(objects, map_edges, obj_classes) # not using edges for now 
+            )
 
         if cfg.save_objects_all_frames:
             save_objects_for_frame(
@@ -569,8 +534,6 @@ def main(cfg : DictConfig):
                 "is_final_frame": is_final_frame,
                 })
     # LOOP OVER -----------------------------------------------------
-    
-    handle_rerun_saving(cfg.use_rerun, cfg.save_rerun, cfg.exp_suffix, exp_out_path)
 
     # Save the pointcloud
     if cfg.save_pcd:

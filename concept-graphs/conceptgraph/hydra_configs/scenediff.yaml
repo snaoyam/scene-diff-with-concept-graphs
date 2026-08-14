@@ -1,0 +1,11 @@
+defaults:
+  - base_paths
+
+# SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
+# ScanNet-style RGB-D sequences by conceptgraph/dataset/scenediff_to_conceptgraph.py.
+# Each SceneDiff pair produces two ConceptGraph scenes sharing one Pi3-estimated
+# coordinate frame: <pair_name>_before and <pair_name>_after.
+dataset_root: ${data_root}/scenediff
+scene_id: living_room_17_living_room_18_before
+dataset_config: ${repo_root}/conceptgraph/dataset/dataconfigs/scenediff/${scene_id}.yaml
+render_camera_path: ${repo_root}/conceptgraph/dataset/dataconfigs/replica/replica_room0.json

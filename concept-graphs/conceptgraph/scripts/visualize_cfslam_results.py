@@ -346,37 +346,37 @@ if __name__ == "__main__":
 
 '''
 
-python scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/pcd_saves/full_pcd_none_overlap_maskconf0.95_simsum1.2_dbscan.1_merge20_masksub_post.pkl.gz
+python scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/pcd_saves/full_pcd_none_overlap_maskconf0.95_simsum1.2_dbscan.1_merge20_masksub_post.pkl.gz
 
-python scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/pcd_saves/full_pcd_ram_class_ram_stride50_no_bg__ram_class_ram_stride50_no_bg_overlap_maskconf0.25_simsum1.2_dbscan.1_post.pkl.gz
+python scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/pcd_saves/full_pcd_ram_class_ram_stride50_no_bg__ram_class_ram_stride50_no_bg_overlap_maskconf0.25_simsum1.2_dbscan.1_post.pkl.gz
 
-python scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/pcd_saves/full_pcd_ram__yolo_class_ram_stride50_no_bg4__ram_yolo_class_ram_stride50_no_bg_overlap_maskconf0.25_simsum1.2_dbscan.1_post.pkl.gz
-
-
-python scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/pcd_saves/full_pcd_ram_class_ram_stride50_no_bg__TEST_ram_class_ram_stride50_no_bg_overlap_maskconf0.25_simsum1.2_dbscan.1.pkl.gz
+python scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/pcd_saves/full_pcd_ram__yolo_class_ram_stride50_no_bg4__ram_yolo_class_ram_stride50_no_bg_overlap_maskconf0.25_simsum1.2_dbscan.1_post.pkl.gz
 
 
-python scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/pcd_saves/full_pcd_scannet200_class_ram_stride50_yes_bg2_mapping_scannet200_class_ram_stride50_yes_bg2.pkl.gz
-
-python scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_38/full_pcd_s_mapping_yes_bg_38.pkl.gz
-
-python scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_39/full_pcd_s_mapping_yes_bg_39_post.pkl.gz
+python scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/pcd_saves/full_pcd_ram_class_ram_stride50_no_bg__TEST_ram_class_ram_stride50_no_bg_overlap_maskconf0.25_simsum1.2_dbscan.1.pkl.gz
 
 
-python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_40/full_pcd_s_mapping_yes_bg_40_post.pkl.gz
+python scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/pcd_saves/full_pcd_scannet200_class_ram_stride50_yes_bg2_mapping_scannet200_class_ram_stride50_yes_bg2.pkl.gz
 
-python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_41/full_pcd_s_mapping_yes_bg_41_post.pkl.gz
+python scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_38/full_pcd_s_mapping_yes_bg_38.pkl.gz
 
-python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_42/full_pcd_s_mapping_yes_bg_42_post.pkl.gz
-
-python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_43/full_pcd_s_mapping_yes_bg_43_post.pkl.gz
-
-python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/office0/exps/s_mapping_yes_bg_multirun_45/full_pcd_s_mapping_yes_bg_multirun_45.pkl.gz
+python scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_39/full_pcd_s_mapping_yes_bg_39_post.pkl.gz
 
 
-python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/room0/exps/s_mapping_yes_bg_multirun_45/full_pcd_s_mapping_yes_bg_multirun_45.pkl.gz
+python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_40/full_pcd_s_mapping_yes_bg_40_post.pkl.gz
 
-python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /home/kuwajerw/new_local_data/new_replica/Replica/office0/exps/s_mapping_yes_bg_multirun_45/full_pcd_s_mapping_yes_bg_multirun_45.pkl.gz
+python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_41/full_pcd_s_mapping_yes_bg_41_post.pkl.gz
+
+python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_42/full_pcd_s_mapping_yes_bg_42_post.pkl.gz
+
+python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/exps/exp_s_mapping_yes_bg_43/full_pcd_s_mapping_yes_bg_43_post.pkl.gz
+
+python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/office0/exps/s_mapping_yes_bg_multirun_45/full_pcd_s_mapping_yes_bg_multirun_45.pkl.gz
+
+
+python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/room0/exps/s_mapping_yes_bg_multirun_45/full_pcd_s_mapping_yes_bg_multirun_45.pkl.gz
+
+python concept-graphs/conceptgraph/scripts/visualize_cfslam_results.py --result_path /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica/office0/exps/s_mapping_yes_bg_multirun_45/full_pcd_s_mapping_yes_bg_multirun_45.pkl.gz
 
 
 

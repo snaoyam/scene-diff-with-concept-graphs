@@ -13,7 +13,7 @@ def encode_image_for_openai(image_path: str):
         return base64.b64encode(image_file.read()).decode('utf-8')
 
 # Getting the base64 string
-img_path = '/home/kuwajerw/new_local_data/new_record3d/ali_apartment/apt_scan_no_smooth_processed/exps/s_detections_stride1_69/vis/160_for_vlm.jpg'
+img_path = '/node_data/urp26su_dongwoo/new_local_data/new_record3d/ali_apartment/apt_scan_no_smooth_processed/exps/s_detections_stride1_69/vis/160_for_vlm.jpg'
 base64_image = encode_image_for_openai(str(img_path))
 
 

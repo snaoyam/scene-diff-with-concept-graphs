@@ -1376,6 +1376,26 @@ def prepare_objects_save_vis(objects: MapObjectList, downsample_size: float=0.02
                 
     return objects_to_save.to_serializable()
 
+def edge_is_geometrically_plausible(obj1, obj2, max_gap_factor):
+    '''
+    VLM edges only look at the flat 2D image, so two objects that merely
+    overlap in screen space (e.g. one near the camera, one far in the
+    background) can get labeled "next to"/"on top of" despite being nowhere
+    near each other in 3D. This is a cheap sanity check on the actual 3D
+    geometry: reject the edge if the gap between the two objects' bounding
+    boxes (center distance minus each box's approximate radius) is more than
+    `max_gap_factor` times their combined size. Relative to object size
+    (rather than an absolute distance) so it works regardless of a dataset's
+    coordinate scale/units.
+    '''
+    center1, center2 = np.asarray(obj1['bbox'].center), np.asarray(obj2['bbox'].center)
+    radius1 = np.mean(obj1['bbox'].extent) / 2.0
+    radius2 = np.mean(obj2['bbox'].extent) / 2.0
+    surface_gap = np.linalg.norm(center1 - center2) - radius1 - radius2
+    max_gap = max_gap_factor * (radius1 + radius2)
+    return surface_gap <= max_gap
+
+
 def process_edges(match_indices, gobs, initial_objects_count, objects, map_edges, frame_idx):
     # Step 1: Generate match_indices_w_new_obj with indices for new objects
     # Initial count of objects before processing new detections
@@ -1420,7 +1440,7 @@ def process_edges(match_indices, gobs, initial_objects_count, objects, map_edges
 
         curr_edges_3d_by_index.append((obj1_objects_index, relation, obj2_objects_index))
 
-    print(f"Line 624, curr_edges_3d_by_index: {curr_edges_3d_by_index}")
+    # print(f"Line 624, curr_edges_3d_by_index: {curr_edges_3d_by_index}")
     
     # Add the new edges to the map
     for (obj_1_idx, rel_type, obj_2_idx) in curr_edges_3d_by_index:

@@ -2,4 +2,3 @@ defaults:
   - override hydra/job_logging: custom_logging_format
 
 use_wandb: !!bool False
-use_rerun: !!bool False

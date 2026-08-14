@@ -8,6 +8,11 @@ import numpy as np
 
 import ast
 import re
+import logging
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 system_prompt_1 = '''
 You are an agent specialized in describing the spatial relationships between objects in an annotated image.
@@ -32,7 +37,7 @@ When provided with an annotated image and a corresponding list of labels for the
 [("object1", "on top of", "object2"), ...]
 '''
 
-# Only deal with the "on top of" relation
+# Deals with "on top of", "under", and "next to" relations
 system_prompt_only_top = '''
 You are an agent specializing in identifying the physical and spatial relationships in annotated images for 3D mapping.
 
@@ -43,11 +48,12 @@ Note that you are describing the **physical relationships** between the **object
 You will also be given a text list of the numeric ids of the objects in the image. The list will be in the format: ["1: name1", "2: name2", "3: name3" ...], only output the physical relationships between the objects in the list.
 
 The relation types you must report are:
-- phyically placed on top of: ("object x", "on top of", "object y") 
-- phyically placed underneath: ("object x", "under", "object y") 
+- phyically placed on top of: ("object x", "on top of", "object y")
+- phyically placed underneath: ("object x", "under", "object y")
+- physically beside/adjacent to, touching or near each other with neither on top of the other: ("object x", "next to", "object y")
 
 An illustrative example of the expected response format might look like this:
-[("object 1", "on top of", "object 2"), ("object 3", "under", "object 2"), ("object 4", "on top of", "object 3")]. Do not put the names of the objects in your response, only the numeric ids.
+[("object 1", "on top of", "object 2"), ("object 3", "under", "object 2"), ("object 4", "next to", "object 1")]. Do not put the names of the objects in your response, only the numeric ids.
 
 Do not include any other information in your response. Only output a parsable list of tuples describing the given physical relationships between objects in the image.
 '''
@@ -99,12 +105,14 @@ Do not include any additional information in your response.
 
 system_prompt = system_prompt_only_top
 
-# gpt_model = "gpt-4-vision-preview"
-gpt_model = "gpt-4o-2024-05-13"
+# 모델 이름을 로컬 vLLM 서버에 로드된 모델로 변경
+gpt_model = "Qwen/Qwen3-VL-8B-Instruct"
 
 def get_openai_client():
+    # OpenAI 클라이언트가 로컬 vLLM 서버를 가리키도록 base_url 및 api_key 변경
     client = OpenAI(
-        api_key=os.getenv('OPENAI_API_KEY')
+        base_url="http://localhost:8019/v1",
+        api_key="EMPTY"
     )
     return client
 
@@ -116,17 +124,17 @@ def encode_image_for_openai(image_path: str, resize = False, target_size: int=51
     
     if not resize:
         # Open the image
-        print(f"Opening image from path: {image_path}")
+        # print(f"Opening image from path: {image_path}")
         with open(image_path, "rb") as img_file:
             encoded_image = base64.b64encode(img_file.read()).decode('utf-8')
-            print("Image encoded in base64 format.")
+            # print("Image encoded in base64 format.")
         return encoded_image
     
-    print(f"Opening image from path: {image_path}")
+    # print(f"Opening image from path: {image_path}")
     with Image.open(image_path) as img:
         # Determine scaling factor to maintain aspect ratio
         original_width, original_height = img.size
-        print(f"Original image dimensions: {original_width} x {original_height}")
+        # print(f"Original image dimensions: {original_width} x {original_height}")
         
         if original_width > original_height:
             scale = target_size / original_width
@@ -137,25 +145,25 @@ def encode_image_for_openai(image_path: str, resize = False, target_size: int=51
             new_height = target_size
             new_width = int(original_width * scale)
 
-        print(f"Resized image dimensions: {new_width} x {new_height}")
+        # print(f"Resized image dimensions: {new_width} x {new_height}")
 
         # Resizing the image
         img_resized = img.resize((new_width, new_height), Image.LANCZOS)
-        print("Image resized successfully.")
+        # print("Image resized successfully.")
         
         # Convert the image to bytes and encode it in base64
         with open("temp_resized_image.jpg", "wb") as temp_file:
             img_resized.save(temp_file, format="JPEG")
-            print("Resized image saved temporarily for encoding.")
+            # print("Resized image saved temporarily for encoding.")
         
         # Open the temporarily saved image for base64 encoding
         with open("temp_resized_image.jpg", "rb") as temp_file:
             encoded_image = base64.b64encode(temp_file.read()).decode('utf-8')
-            print("Image encoded in base64 format.")
+            # print("Image encoded in base64 format.")
         
         # Clean up the temporary file
         os.remove("temp_resized_image.jpg")
-        print("Temporary file removed.")
+        # print("Temporary file removed.")
 
     return encoded_image
 
@@ -290,7 +298,7 @@ def get_obj_rel_from_image_gpt4v(client: OpenAI, image_path: str, label_list: li
         )
         
         vlm_answer_str = response.choices[0].message.content
-        print(f"Line 113, vlm_answer_str: {vlm_answer_str}")
+        # print(f"Line 113, vlm_answer_str: {vlm_answer_str}")
         
         vlm_answer = extract_list_of_tuples(vlm_answer_str)
 
@@ -298,8 +306,8 @@ def get_obj_rel_from_image_gpt4v(client: OpenAI, image_path: str, label_list: li
         print(f"An error occurred: {str(e)}")
         print(f"Setting vlm_answer to an empty list.")
         vlm_answer = []
-    print(f"Line 68, user_query: {user_query}")
-    print(f"Line 97, vlm_answer: {vlm_answer}")
+    # print(f"Line 68, user_query: {user_query}")
+    # print(f"Line 97, vlm_answer: {vlm_answer}")
     
     
     return vlm_answer
@@ -345,7 +353,7 @@ def get_obj_captions_from_image_gpt4v(client: OpenAI, image_path: str, label_lis
         )
         
         vlm_answer_str = response.choices[0].message.content
-        print(f"Line 113, vlm_answer_str: {vlm_answer_str}")
+        # print(f"Line 113, vlm_answer_str: {vlm_answer_str}")
         
         vlm_answer_captions = vlm_extract_object_captions(vlm_answer_str)
 
@@ -353,8 +361,8 @@ def get_obj_captions_from_image_gpt4v(client: OpenAI, image_path: str, label_lis
         print(f"An error occurred: {str(e)}")
         print(f"Setting vlm_answer to an empty list.")
         vlm_answer_captions = []
-    print(f"Line 68, user_query: {user_query}")
-    print(f"Line 97, vlm_answer: {vlm_answer_captions}")
+    # print(f"Line 68, user_query: {user_query}")
+    # print(f"Line 97, vlm_answer: {vlm_answer_captions}")
     
     
     return vlm_answer_captions

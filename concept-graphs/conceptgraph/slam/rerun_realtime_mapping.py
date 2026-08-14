@@ -5,6 +5,7 @@ The script is used to model Grounded SAM detections in 3D, it assumes the tag2te
 # Standard library imports
 import os
 import copy
+import logging
 import uuid
 from pathlib import Path
 import pickle
@@ -19,36 +20,22 @@ from PIL import Image
 from tqdm import trange
 from open3d.io import read_pinhole_camera_parameters
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import open_clip
 from ultralytics import YOLO, SAM
 import supervision as sv
 from collections import Counter
 
 # Local application/library specific imports
-from conceptgraph.utils.optional_rerun_wrapper import (
-    OptionalReRun, 
-    orr_log_annotated_image, 
-    orr_log_camera, 
-    orr_log_depth_image, 
-    orr_log_edges, 
-    orr_log_objs_pcd_and_bbox, 
-    orr_log_rgb_image, 
-    orr_log_vlm_image
-)
 from conceptgraph.utils.optional_wandb_wrapper import OptionalWandB
-from conceptgraph.utils.geometry import rotation_matrix_to_quaternion
 from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker
 from conceptgraph.utils.vlm import consolidate_captions, get_obj_rel_from_image_gpt4v, get_openai_client
 from conceptgraph.utils.ious import mask_subtract_contained
 from conceptgraph.utils.general_utils import (
-    ObjectClasses, 
-    find_existing_image_path, 
-    get_det_out_path, 
-    get_exp_out_path, 
-    get_vlm_annotated_image_path, 
-    handle_rerun_saving, 
-    load_saved_detections, 
+    ObjectClasses,
+    get_det_out_path,
+    get_exp_out_path,
+    load_saved_detections,
     load_saved_hydra_json_config, 
     make_vlm_edges_and_captions, 
     measure_time, 
@@ -72,13 +59,14 @@ from conceptgraph.utils.vis import (
 )
 from conceptgraph.slam.slam_classes import MapEdgeMapping, MapObjectList
 from conceptgraph.slam.utils import (
+    edge_is_geometrically_plausible,
     filter_gobs,
     filter_objects,
     get_bounding_box,
     init_process_pcd,
     make_detection_list_from_pcd_and_gobs,
     denoise_objects,
-    merge_objects, 
+    merge_objects,
     detections_to_obj_pcd_and_bbox,
     prepare_objects_save_vis,
     process_cfg,
@@ -96,6 +84,8 @@ from conceptgraph.slam.mapping import (
 )
 from conceptgraph.utils.model_utils import compute_clip_features_batched
 from conceptgraph.utils.general_utils import get_vis_out_path, cfg_to_dict, check_run_detections
+from conceptgraph.utils.scenegraph_viz import render_frame_scenegraph
+from conceptgraph.utils.visualize_full_scenegraph import load_scene_graph, render_full_scenegraph
 
 
 # Disable torch gradient computation
@@ -105,12 +95,19 @@ torch.set_grad_enabled(False)
 @hydra.main(version_base=None, config_path="../hydra_configs/", config_name="rerun_realtime_mapping")
 # @profile
 def main(cfg : DictConfig):
+    # OmegaConf.set_struct(cfg, False)
+    # cfg.image_height = 512
+    # cfg.image_width = 512
+
+    # hydra.verbose bumps every logger (including PIL's) to DEBUG, which floods
+    # the log with harmless internal messages (e.g. "Error closing: Operation on
+    # closed image" from imageio/Pillow double-closing PNG file handles). Keep
+    # PIL quiet without touching the global verbose setting.
+    logging.getLogger("PIL").setLevel(logging.INFO)
+
     tracker = MappingTracker()
-    
-    orr = OptionalReRun()
-    orr.set_use_rerun(cfg.use_rerun)
-    orr.init("realtime_mapping")
-    orr.spawn()
+    exp_out_path = get_exp_out_path(cfg.dataset_root, cfg.scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
+    exp_out_path.mkdir(exist_ok=True, parents=True)
 
     owandb = OptionalWandB()
     owandb.set_use_wandb(cfg.use_wandb)
@@ -148,10 +145,10 @@ def main(cfg : DictConfig):
         )
         frames = []
     # output folder for this mapping experiment
-    exp_out_path = get_exp_out_path(cfg.dataset_root, cfg.scene_id, cfg.exp_suffix)
+    exp_out_path = get_exp_out_path(cfg.dataset_root, cfg.scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
 
     # output folder of the detections experiment to use
-    det_exp_path = get_exp_out_path(cfg.dataset_root, cfg.scene_id, cfg.detections_exp_suffix, make_dir=False)
+    det_exp_path = get_exp_out_path(cfg.dataset_root, cfg.scene_id, cfg.detections_exp_suffix, make_dir=False, exps_dir_name=cfg.exps_dir_name)
 
     # we need to make sure to use the same classes as the ones used in the detections
     detections_exp_cfg = cfg_to_dict(cfg)
@@ -165,8 +162,6 @@ def main(cfg : DictConfig):
     run_detections = check_run_detections(cfg.force_detection, det_exp_path)
     det_exp_pkl_path = get_det_out_path(det_exp_path)
     det_exp_vis_path = get_vis_out_path(det_exp_path)
-    
-    prev_adjusted_pose = None
 
     if run_detections:
         print("\n".join(["Running detections..."] * 10))
@@ -199,12 +194,14 @@ def main(cfg : DictConfig):
         obj_all_frames_out_path = exp_out_path / "saved_obj_all_frames" / f"det_{cfg.detections_exp_suffix}"
         os.makedirs(obj_all_frames_out_path, exist_ok=True)
 
+    scenegraph_color_cache = {}
+    scenegraph_viz_out_path = exp_out_path / "scenegraph_viz"
+
     exit_early_flag = False
     counter = 0
     for frame_idx in trange(len(dataset)):
         tracker.curr_frame_idx = frame_idx
         counter+=1
-        orr.set_time_sequence("frame", frame_idx)
 
         # Check if we should exit early only if the flag hasn't been set yet
         if not exit_early_flag and should_exit_early(cfg.exit_early_file):
@@ -233,10 +230,7 @@ def main(cfg : DictConfig):
         raw_gobs = None
         gobs = None # stands for grounded observations
         detections_path = det_exp_pkl_path / (color_path.stem + ".pkl.gz")
-        
-        vis_save_path_for_vlm = get_vlm_annotated_image_path(det_exp_vis_path, color_path)
-        vis_save_path_for_vlm_edges = get_vlm_annotated_image_path(det_exp_vis_path, color_path, w_edges=True)
-        
+
         if run_detections:
             results = None
             # opencv can't read Path objects...
@@ -330,14 +324,6 @@ def main(cfg : DictConfig):
 
         # Don't apply any transformation otherwise
         adjusted_pose = unt_pose
-        
-        prev_adjusted_pose = orr_log_camera(intrinsics, adjusted_pose, prev_adjusted_pose, cfg.image_width, cfg.image_height, frame_idx)
-        
-        orr_log_rgb_image(color_path)
-        orr_log_annotated_image(color_path, det_exp_vis_path)
-        orr_log_depth_image(depth_tensor)
-        orr_log_vlm_image(vis_save_path_for_vlm)
-        orr_log_vlm_image(vis_save_path_for_vlm_edges, label="w_edges")
 
         # resize the observation if needed
         resized_gobs = resize_gobs(raw_gobs, image_rgb)
@@ -463,7 +449,11 @@ def main(cfg : DictConfig):
             obj2_class_name = objects[curr_obj2_idx]['class_name']
             curr_first_detected = curr_map_edge.first_detected
             curr_num_det = curr_map_edge.num_detections
-            if (frame_idx - curr_first_detected > 5) and curr_num_det < 2:
+            if (frame_idx - curr_first_detected > cfg.edge_prune_window) and curr_num_det < 2:
+                edges_to_delete.append((curr_obj1_idx, curr_obj2_idx))
+            elif cfg.edge_max_gap_factor > 0 and not edge_is_geometrically_plausible(
+                objects[curr_obj1_idx], objects[curr_obj2_idx], cfg.edge_max_gap_factor
+            ):
                 edges_to_delete.append((curr_obj1_idx, curr_obj2_idx))
         for edge in edges_to_delete:
             map_edges.delete_edge(edge[0], edge[1])
@@ -537,8 +527,6 @@ def main(cfg : DictConfig):
                     do_edges=False,
                     map_edges=None
                 )
-        orr_log_objs_pcd_and_bbox(objects, obj_classes)
-        orr_log_edges(objects, map_edges, obj_classes)
 
         if cfg.save_objects_all_frames:
             save_objects_for_frame(
@@ -609,7 +597,47 @@ def main(cfg : DictConfig):
             consolidated_caption = consolidate_captions(openai_client, obj_captions)
             object['consolidated_caption'] = consolidated_caption
 
-    handle_rerun_saving(cfg.use_rerun, cfg.save_rerun, cfg.exp_suffix, exp_out_path)
+    # Render scene graph visualizations using the final, fully merged/filtered
+    # map (not the intermediate per-frame state), so every frame's overlay
+    # reflects the same completed concept graph.
+    if cfg.save_scenegraph_viz:
+        print("Rendering final scene graph visualizations...")
+        for frame_idx in trange(len(dataset)):
+            color_path = Path(dataset.color_paths[frame_idx])
+            color_tensor, *_ = dataset[frame_idx]
+            image_rgb = color_tensor.cpu().numpy().astype(np.uint8)
+
+            frame_obj_indices = set()
+            frame_objects = []
+            for obj_idx, obj in enumerate(objects):
+                if frame_idx not in obj['image_idx']:
+                    continue
+                local_idx = obj['image_idx'].index(frame_idx)
+                frame_obj_indices.add(obj_idx)
+                frame_objects.append({
+                    'obj_num': obj['curr_obj_num'],
+                    'class_name': obj['class_name'],
+                    'caption': obj['captions'][local_idx].get('caption', '') if obj['captions'] else '',
+                    'mask': obj['mask'][local_idx],
+                    'xyxy': obj['xyxy'][local_idx],
+                })
+
+            if not frame_objects:
+                continue
+
+            frame_edges = [
+                (objects[obj1_idx]['curr_obj_num'], edge.rel_type, objects[obj2_idx]['curr_obj_num'])
+                for (obj1_idx, obj2_idx), edge in map_edges.edges_by_index.items()
+                if obj1_idx in frame_obj_indices and obj2_idx in frame_obj_indices
+            ]
+
+            render_frame_scenegraph(
+                image_rgb,
+                frame_objects,
+                frame_edges,
+                scenegraph_viz_out_path / f"{color_path.stem}_viz.png",
+                scenegraph_color_cache,
+            )
 
     # Save the pointcloud
     if cfg.save_pcd:
@@ -637,6 +665,18 @@ def main(cfg : DictConfig):
             objects=objects,
             edges=map_edges
         )
+
+        if cfg.save_scenegraph_full:
+            full_scenegraph = load_scene_graph(
+                exp_out_path / f"obj_json_{cfg.exp_suffix}.json",
+                exp_out_path / f"edge_json_{cfg.exp_suffix}.json",
+            )
+            full_scenegraph_path = render_full_scenegraph(
+                full_scenegraph,
+                exp_out_path / "scenegraph_full.png",
+                title=f"{cfg.scene_id} / {cfg.exp_suffix}",
+            )
+            print(f"Saved full scene graph to {full_scenegraph_path}")
 
     # Save metadata if all frames are saved
     if cfg.save_objects_all_frames:

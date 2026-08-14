@@ -268,7 +268,7 @@ def main(cfg : DictConfig):
                 # curr_detection_name = (vis_save_path.stem + ".pkl.gz")
                 # with gzip.open(det_exp_pkl_path / curr_detection_name , "wb") as f:
                 #     pickle.dump(results, f)
-                # /home/kuwajerw/new_local_data/new_record3d/ali_apartment/apt_scan_no_smooth_processed/exps/r_detections_stride1000_2/detections/0
+                # /node_data/urp26su_dongwoo/new_local_data/new_record3d/ali_apartment/apt_scan_no_smooth_processed/exps/r_detections_stride1000_2/detections/0
 
                 save_detection_results(det_exp_pkl_path / vis_save_path.stem, results)
         else:

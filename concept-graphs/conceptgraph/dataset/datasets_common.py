@@ -539,6 +539,17 @@ class ScannetDataset(GradSLAMDataset):
         return embedding.permute(0, 2, 3, 1)  # (1, H, W, embedding_dim)
 
 
+class SceneDiffDataset(ScannetDataset):
+    '''
+    SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
+    ScanNet-style color/depth/pose sequences by
+    conceptgraph/dataset/scenediff_to_conceptgraph.py (camera poses and depth
+    come from Pi3 since SceneDiff itself only ships RGB video). Folder layout
+    is identical to ScannetDataset, so this is just a distinct dataset_name.
+    '''
+    pass
+
+
 class Ai2thorDataset(GradSLAMDataset):
     def __init__(
         self,
@@ -1110,6 +1121,8 @@ def get_dataset(dataconfig, basedir, sequence, **kwargs):
         return AzureKinectDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["scannet"]:
         return ScannetDataset(config_dict, basedir, sequence, **kwargs)
+    elif config_dict["dataset_name"].lower() in ["scenediff"]:
+        return SceneDiffDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["ai2thor"]:
         return Ai2thorDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["record3d"]:

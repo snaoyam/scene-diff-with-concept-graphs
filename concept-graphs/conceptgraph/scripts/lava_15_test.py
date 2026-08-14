@@ -22,7 +22,7 @@ processor = AutoProcessor.from_pretrained(model_id)
 
 # raw_image = Image.open(requests.get(image_file, stream=True).raw)
 
-img_path = '/home/kuwajerw/new_local_data/new_record3d/ali_apartment/apt_scan_no_smooth_processed/exps/s_detections_stride1_69/vis/160_for_vlm.jpg'
+img_path = '/node_data/urp26su_dongwoo/new_local_data/new_record3d/ali_apartment/apt_scan_no_smooth_processed/exps/s_detections_stride1_69/vis/160_for_vlm.jpg'
 raw_image = Image.open(img_path).convert('RGB')
 
 labels = ['power outlet 1', 'backpack 2', 'computer tower 3', 'poster 4', 'desk 5', 'picture 6', 'bowl 7', 'folded chair 8', 'trash bin 9', 'tissue box 10']

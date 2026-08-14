@@ -148,10 +148,10 @@ Finally `_self_` is loaded, which are te values in `streamlined_detections.yaml`
 To run the detections script, you need to edit the paths for the replica dataset in the `replica.yaml` file. Here is an example of my `concept-graphs/conceptgraph/hydra_configs/replica.yaml` file, you need to change these paths to point to where you have installed the replica dataset:
 
 ```yaml
-dataset_root: /home/kuwajerw/new_local_data/new_replica/Replica
-dataset_config: /home/kuwajerw/repos/new_conceptgraphs/concept-graphs/conceptgraph/dataset/dataconfigs/replica/replica.yaml
+dataset_root: /node_data/urp26su_dongwoo/new_local_data/new_replica/Replica
+dataset_config: /node_data/urp26su_dongwoo/repos/new_conceptgraphs/concept-graphs/conceptgraph/dataset/dataconfigs/replica/replica.yaml
 scene_id: room0
-render_camera_path: /home/kuwajerw/repos/new_conceptgraphs/concept-graphs/conceptgraph/dataset/dataconfigs/replica/replica_room0.json
+render_camera_path: /node_data/urp26su_dongwoo/repos/new_conceptgraphs/concept-graphs/conceptgraph/dataset/dataconfigs/replica/replica_room0.json
 ```
 
 ## Running the detections script

@@ -178,12 +178,12 @@ pip install tyro open_clip_torch wandb h5py openai hydra-core distinctipy ultral
 # You also need to ensure that the installed packages can find the right cuda installation.
 # You can do this by setting the CUDA_HOME environment variable.
 # You can manually set it to the python environment you are using, or set it to the conda prefix of the environment.
-# for me its export CUDA_HOME=/home/kuwajerw/anaconda3/envs/conceptgraph
+# for me its export CUDA_HOME=/node_data/urp26su_dongwoo/anaconda3/envs/conceptgraph
 export CUDA_HOME=/path/to/anaconda3/envs/conceptgraph
 
 # Finally install conceptgraphs
 cd /path/to/code/ # wherever you want to install conceptgraphs
-# for me its /home/kuwajerw/repos/
+# for me its /node_data/urp26su_dongwoo/repos/
 git clone https://github.com/concept-graphs/concept-graphs.git
 cd concept-graphs
 git checkout ali-dev
@@ -256,8 +256,8 @@ Finally `_self_` is loaded, which are te values in `rerun_realtime_mapping.yaml`
 The first thing to set in your config files is where you've installed conceptgraphs and where your data is. Update this in the `./conceptgraph/hydra_configs/base_paaths.yaml` file. For me, it is:
 
 ```yaml
-repo_root: /home/kuwajerw/repos/concept-graphs
-data_root: /home/kuwajerw/local_data
+repo_root: /node_data/urp26su_dongwoo/repos/concept-graphs
+data_root: /node_data/urp26su_dongwoo/local_data
 ```
 
 ### Building the map
@@ -357,10 +357,10 @@ Then you want to use the `concept-graphs/conceptgraph/dataset/preprocess_r3d_fil
 ```
 class ProgramArgs:
     # this folder contains the metadata folder and the rgb folder etc inside it
-    datapath = "/home/kuwajerw/local_data/record3d_scans/co_store" 
+    datapath = "/node_data/urp26su_dongwoo/local_data/record3d_scans/co_store" 
 ```
 
-Let that script run, and now you'll have a folder called `/home/kuwajerw/local_data/record3d_scans/co_store_preprocessed` which you can use with ConceptGraphs, for which you can follow the same instructions as the Replica dataset.
+Let that script run, and now you'll have a folder called `/node_data/urp26su_dongwoo/local_data/record3d_scans/co_store_preprocessed` which you can use with ConceptGraphs, for which you can follow the same instructions as the Replica dataset.
 
 
 

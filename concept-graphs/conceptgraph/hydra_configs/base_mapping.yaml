@@ -11,7 +11,7 @@ stride: 50
 image_height: null # if null, it will be determined by dataconfig
 image_width: null # if null, it will be determined by dataconfig
 
-make_edges: !!bool False
+make_edges: !!bool True
 
 periodically_save_pcd: !!bool False
 periodically_save_pcd_interval: 10
@@ -47,7 +47,7 @@ contain_mismatch_penalty: 0.5
 # Selection criteria on the 2D masks
 mask_area_threshold: 25 # mask with pixel area less than this will be skipped
 mask_conf_threshold: 0.25 # mask with lower confidence score will be skipped
-max_bbox_area_ratio: 0.5 # boxes with larger areas than this will be skipped
+max_bbox_area_ratio: null # boxes with larger areas than this will be skipped
 
 min_points_threshold: 16 # projected and sampled pcd with less points will be skipped
 
@@ -88,9 +88,5 @@ debug_render: !!bool False     # If True, the vis.run() will be called and used 
 class_agnostic: !!bool False   # If set, the color will be set by instance, rather than most common class
 
 save_objects_all_frames: !!bool False   # If True, the objects at all timesteps will be saved for future animation
-
-
-use_rerun: !!bool False
-save_rerun: !!bool False
 
 latest_pcd_filepath: ${repo_root}/latest_pcd_save

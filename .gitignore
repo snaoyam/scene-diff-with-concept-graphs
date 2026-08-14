@@ -14,7 +14,7 @@
 
 
 /results*/
-/concept-graphs-dev/conceptgraph/dataset/dataconfigs/scenediff/
+/concept-graphs/conceptgraph/dataset/dataconfigs/scenediff/
 
 *.pth
 

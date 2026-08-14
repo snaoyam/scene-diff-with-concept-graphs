@@ -141,7 +141,7 @@ if __name__ == "__main__":
         for i, idx_det in enumerate(idx_sort[:5]):
             # wrong_path = picked_obj['color_path'][idx_det]
             # correct_prefix = '/home/sacha/data/scan12/'
-            # wrong_prefix = '/home/kuwajerw/local_data/azure/liam_lab_w_objects/scan12/'
+            # wrong_prefix = '/node_data/urp26su_dongwoo/local_data/azure/liam_lab_w_objects/scan12/'
             # correct_path = wrong_path.replace(wrong_prefix, correct_prefix)
 
             # image = Image.open(correct_path)

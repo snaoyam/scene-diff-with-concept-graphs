@@ -117,8 +117,8 @@ def get_stream_data_out_path(dataset_root, scene_id, make_dir=True):
         
     return stream_rgb_path, stream_depth_path, stream_poses_path
 
-def get_exp_out_path(dataset_root, scene_id, exp_suffix, make_dir=True):
-    exp_out_path = Path(dataset_root) / scene_id / "exps" / f"{exp_suffix}"
+def get_exp_out_path(dataset_root, scene_id, exp_suffix, make_dir=True, exps_dir_name="exps"):
+    exp_out_path = Path(dataset_root) / scene_id / exps_dir_name / f"{exp_suffix}"
     if make_dir:
         exp_out_path.mkdir(exist_ok=True, parents=True)
     return exp_out_path
@@ -466,18 +466,6 @@ def make_vlm_edges_and_captions(image, curr_det, obj_classes, detection_class_la
     
     return labels, edges, edge_image, captions
     
-def handle_rerun_saving(use_rerun, save_rerun, exp_suffix, exp_out_path):
-    # Save the rerun output if needed
-    if use_rerun and save_rerun:
-        rerun_file_path = exp_out_path / f"rerun_{exp_suffix}.rrd"
-        print("Mapping done!")
-        print("If you want to save the rerun file, you should do so from the rerun viewer now.")
-        print("You can't yet both save and log a file in rerun.")
-        print("If you do, make a pull request!")
-        print("Also, close the viewer before continuing, it frees up a lot of RAM, which helps for saving the pointclouds.")
-        print(f"Feel free to copy and use this path below, or choose your own:\n{rerun_file_path}")
-        input("Then press Enter to continue.")
-
 def measure_time(func):
     def wrapper(*args, **kwargs):
         start_time = time.time()
