@@ -31,11 +31,22 @@ import gzip
 import pickle
 from pathlib import Path
 
+import hydra
 import numpy as np
 from pycocotools import mask as mask_utils
 from scipy.optimize import linear_sum_assignment
 
-import output_paths
+
+def _load_rerun_mapping_config() -> dict:
+    """Reads output_root/exp_suffix from rerun_realtime_mapping.yaml -- the single
+    source of truth for where pipeline outputs live -- via hydra.compose(), the same
+    hydra_configs/ this script's sibling rerun_realtime_mapping.py loads with
+    @hydra.main(config_path="../hydra_configs/", config_name="rerun_realtime_mapping").
+    hydra.initialize() resolves config_path relative to this file, so it's the same
+    "../hydra_configs" used there."""
+    with hydra.initialize(version_base=None, config_path="../hydra_configs"):
+        cfg = hydra.compose(config_name="rerun_realtime_mapping")
+    return {"output_root": Path(cfg.output_root).resolve(), "exp_suffix": cfg.exp_suffix}
 
 
 def load_objects(concept_graphs_dir: Path, variant: str, exp_suffix: str):
@@ -191,11 +202,14 @@ def main():
                          help="Weight of CLIP cosine-distance term relative to spatial distance (meters) in the matching cost")
     args = parser.parse_args()
 
+    cfg = _load_rerun_mapping_config()
+    scene_root = cfg["output_root"] / args.pair_name
+
     convert(
         pair_name=args.pair_name,
-        concept_graphs_dir=output_paths.concept_graphs_dir(args.pair_name),
-        benchmark_data_dir=output_paths.benchmark_data_dir(args.pair_name),
-        exp_suffix=output_paths.get_exp_suffix(),
+        concept_graphs_dir=scene_root / "concept_graphs",
+        benchmark_data_dir=scene_root / "benchmark_data",
+        exp_suffix=cfg["exp_suffix"],
         max_match_distance=args.max_match_distance,
         moved_threshold=args.moved_threshold,
         visual_weight=args.visual_weight,

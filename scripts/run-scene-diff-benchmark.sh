@@ -8,12 +8,12 @@
 #   ./run-scene-diff-benchmark.sh <pair_name>
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONCEPT_GRAPHS_SLAM_DIR="$(cd "$SCRIPT_DIR/../concept-graphs/conceptgraph/slam" && pwd)"
 
 run_scene_diff_benchmark() {
     local pair_name="$1"
-    conda run -n scene_diff --no-capture-output \
-        python "$SCRIPT_DIR/run_scene_diff_benchmark.py" \
-            --pair_name "$pair_name"
+    python "$CONCEPT_GRAPHS_SLAM_DIR/run_scene_diff_benchmark.py" \
+        --pair_name "$pair_name"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

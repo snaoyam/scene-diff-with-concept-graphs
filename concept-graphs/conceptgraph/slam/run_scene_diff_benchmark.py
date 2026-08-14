@@ -20,7 +20,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-import output_paths
+import hydra
 
 SCENE_DIFF_DIR = Path("/node_data/urp26su_dongwoo/concept-graphs-project/scene_diff")
 
@@ -28,8 +28,21 @@ sys.path.insert(0, str(SCENE_DIFF_DIR / "scripts"))
 import evaluate_multiview  # noqa: E402
 
 
+def _load_output_root() -> Path:
+    """Reads output_root from rerun_realtime_mapping.yaml -- the single source of
+    truth for where pipeline outputs live -- via hydra.compose(), the same
+    hydra_configs/ this script's sibling rerun_realtime_mapping.py loads with
+    @hydra.main(config_path="../hydra_configs/", config_name="rerun_realtime_mapping").
+    hydra.initialize() resolves config_path relative to this file, so it's the same
+    "../hydra_configs" used there."""
+    with hydra.initialize(version_base=None, config_path="../hydra_configs"):
+        cfg = hydra.compose(config_name="rerun_realtime_mapping")
+    return Path(cfg.output_root).resolve()
+
+
 def run_benchmark(pair_name: str, resample_rate: int):
-    benchmark_data_dir = output_paths.benchmark_data_dir(pair_name)
+    scene_root = _load_output_root() / pair_name
+    benchmark_data_dir = scene_root / "benchmark_data"
     pred_path = benchmark_data_dir / "object_masks.pkl"
     if not pred_path.exists():
         raise FileNotFoundError(
@@ -37,7 +50,7 @@ def run_benchmark(pair_name: str, resample_rate: int):
             "(convert-concept-graphs-to-scene-diff-benchmark-data.sh) for this pair first."
         )
 
-    result_dir = output_paths.benchmark_result_dir(pair_name)
+    result_dir = scene_root / "benchmark_result"
     result_dir.mkdir(parents=True, exist_ok=True)
     result_path = result_dir / "eval_result.txt"
 

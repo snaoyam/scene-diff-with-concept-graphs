@@ -123,10 +123,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     DenoisingTracker().reset()
 
     # Output paths nest as outputs/<scene_pair>/concept_graphs/<scene_variant>/... so
-    # that scripts/output_paths.py's benchmark_data/benchmark_result siblings land
-    # under the same outputs/<scene_pair>/ folder -- distinct from cfg.scene_id (used
-    # everywhere else below for dataset loading, wandb naming, etc), which has no
-    # "concept_graphs" segment.
+    # that convert_concept_graphs_to_scene_diff_benchmark_data.py/run_scene_diff_benchmark.py's
+    # benchmark_data/benchmark_result siblings land under the same outputs/<scene_pair>/
+    # folder -- distinct from cfg.scene_id (used everywhere else below for dataset
+    # loading, wandb naming, etc), which has no "concept_graphs" segment.
     concept_graphs_scene_id = f"{cfg.scene_pair}/concept_graphs/{cfg.scene_variant}"
 
     exp_out_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)

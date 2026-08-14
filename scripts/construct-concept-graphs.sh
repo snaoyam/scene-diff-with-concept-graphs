@@ -16,8 +16,7 @@ CONCEPT_GRAPHS_DIR="$(cd "$SCRIPT_DIR/../concept-graphs" && pwd)"
 construct_concept_graphs() {
     local pair_name="$1"
     (cd "$CONCEPT_GRAPHS_DIR" && \
-        conda run -n conceptgraph --no-capture-output \
-            python conceptgraph/slam/rerun_realtime_mapping.py "scene_pair=${pair_name}")
+        python conceptgraph/slam/rerun_realtime_mapping.py "scene_pair=${pair_name}")
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
