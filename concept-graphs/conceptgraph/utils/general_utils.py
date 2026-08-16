@@ -319,7 +319,7 @@ def filter_detections(
             dist = np.sqrt((curr_center[0] - other_center[0]) ** 2 + (curr_center[1] - other_center[1]) ** 2)
             if dist < proximity_threshold:
                 if (keep_larger and curr_area > other_area) or (not keep_larger and curr_area < other_area):
-                    filtered_detections.remove(other)
+                    filtered_detections[:] = [d for d in filtered_detections if d is not other]
                 else:
                     keep = False
                     break
