@@ -13,8 +13,34 @@ source "$SCRIPT_DIR/run-scene-diff-benchmark.sh"
 failed_scenes=()
 
 for scene_id in "${SCENE_PAIRS[@]}"; do
-    echo "=== running [$scene_id] ==="
     scene_output_dir="$OUTPUT_ROOT/$scene_id"
+
+    if [[ -f "$scene_output_dir/benchmark_result/eval_result.txt" ]]; then
+        echo "[$scene_id] eval_result.txt already exists, skipping"
+        continue
+    fi
+
+    # 이전 실행이 중간에 실패해 남은 미완료 폴더는 삭제하고 처음부터 다시 실행
+    concept_graphs_dir="$scene_output_dir/concept_graphs"
+    for variant in before after; do
+        variant_pcd="$concept_graphs_dir/$variant/exps/r_mapping_pilot/pcd_r_mapping_pilot.pkl.gz"
+        if [[ -d "$concept_graphs_dir/$variant" && ! -f "$variant_pcd" ]]; then
+            echo "[$scene_id] removing incomplete concept_graphs/$variant"
+            rm -rf "$concept_graphs_dir/$variant"
+        fi
+    done
+
+    if [[ -d "$scene_output_dir/benchmark_data" && ! -f "$scene_output_dir/benchmark_data/object_masks.pkl" ]]; then
+        echo "[$scene_id] removing incomplete benchmark_data"
+        rm -rf "$scene_output_dir/benchmark_data"
+    fi
+
+    if [[ -d "$scene_output_dir/benchmark_result" ]]; then
+        echo "[$scene_id] removing incomplete benchmark_result"
+        rm -rf "$scene_output_dir/benchmark_result"
+    fi
+
+    echo "=== running [$scene_id] ==="
     mkdir -p "$scene_output_dir"
 
     {
