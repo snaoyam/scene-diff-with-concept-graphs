@@ -1,5 +1,7 @@
 import numpy as np
+import scipy.ndimage as ndi
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from torchvision.transforms import v2
 
@@ -73,23 +75,47 @@ def compute_clip_features_batched(image, detections, clip_model, clip_preprocess
     return image_crops, image_feats, text_feats
 
 
-def compute_dinov3_features_batched(image_crops, dinov3_model, device):
+def compute_dinov3_dense_features(image_rgb, dinov3_model, device):
     '''
-    DINOv3 appearance embedding per detection, reusing the same padded crops
-    compute_clip_features_batched() already produced (image_crops) so both
-    embeddings come from the identical crop region. Returns the global
-    embedding (x_norm_clstoken), L2-normalized like clip_ft.
+    Single DINOv3 forward pass on the whole frame; patch tokens reshaped to a
+    spatial grid and bilinearly upsampled to the frame's original (H, W) so
+    any downstream mask can pool a per-object embedding directly (see
+    pool_dinov3_features_by_mask) -- avoids the CLS-token-of-a-padded-crop
+    contamination problem, since every pixel's feature comes from its own
+    exact location in the full frame rather than a crop that includes
+    whatever happens to surround a small object.
+
+    Returns (D, H, W) L2-normalized torch tensor on `device`.
     '''
-    if not image_crops:
+    h, w = image_rgb.shape[:2]
+    x = dinov3_preprocess(image_rgb).unsqueeze(0).to(device)
+    with torch.no_grad():
+        patch_tokens = dinov3_model.forward_features(x)["x_norm_patchtokens"]
+    n_side = int(patch_tokens.shape[1] ** 0.5)
+    feat_grid = patch_tokens.reshape(1, n_side, n_side, -1).permute(0, 3, 1, 2)
+    dense = F.interpolate(feat_grid, size=(h, w), mode="bilinear", align_corners=False)[0]
+    return dense / dense.norm(dim=0, keepdim=True)
+
+
+def pool_dinov3_features_by_mask(dense_features, masks, erosion_iterations=5):
+    '''
+    Per-mask average of dense_features (see compute_dinov3_dense_features),
+    eroding each mask first to drop boundary pixels -- mask edges sit right
+    against a neighboring object or background, so their pooled-in feature
+    (upsampled from a coarse patch grid) isn't representative of the
+    object's own appearance. Falls back to the un-eroded mask if erosion
+    empties it (thin/small objects).
+
+    masks: (N, H, W) boolean. Returns (N, D) L2-normalized numpy array.
+    '''
+    if len(masks) == 0:
         return np.empty((0, 0), dtype=np.float32)
 
-    preprocessed_images_batch = torch.cat(
-        [dinov3_preprocess(crop).unsqueeze(0) for crop in image_crops], dim=0
-    ).to(device, dtype=torch.float16)
-
-    with torch.no_grad():
-        dino_features = dinov3_model.forward_features(preprocessed_images_batch)
-        cls_token = dino_features["x_norm_clstoken"]
-        cls_token /= cls_token.norm(dim=-1, keepdim=True)
-
-    return cls_token.cpu().numpy()
+    feats = []
+    for mask in masks:
+        eroded = ndi.binary_erosion(mask, iterations=erosion_iterations)
+        region = eroded if eroded.any() else mask
+        region_t = torch.from_numpy(region).to(dense_features.device)
+        feat = dense_features[:, region_t].mean(dim=1)
+        feats.append((feat / feat.norm()).cpu().numpy())
+    return np.stack(feats)

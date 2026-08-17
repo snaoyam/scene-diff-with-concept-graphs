@@ -72,8 +72,14 @@ max_bbox_area_ratio: null # boxes with larger areas than this will be skipped
 # just look visually similar in color/texture -- e.g. two different cups --
 # aren't merged just because CLIP thinks they match).
 dedup_overlap_thresh: 0.3
-dedup_clip_sim_thresh: 0.9
-dedup_dino_sim_thresh: 0.7
+dedup_clip_sim_thresh: 0.75
+dedup_dino_sim_thresh: 0.75
+
+# DINO appearance is computed as a whole-frame dense feature map (one DINOv3
+# forward pass per frame), then averaged per-object over its mask -- eroded by
+# this many pixels first so the averaged feature excludes boundary pixels
+# blended with a neighboring object or background.
+dino_mask_erosion_px: 5
 
 min_points_threshold: 16 # projected and sampled pcd with less points will be skipped
 
