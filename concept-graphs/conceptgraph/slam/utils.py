@@ -203,7 +203,7 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     extend_attributes = ['image_idx', 'mask_idx', 'color_path', 'class_id', 'mask', 'xyxy', 'conf', 'contain_number', 'captions']
     add_attributes = ['num_detections', 'num_obj_in_class']
     skip_attributes = ['id', 'class_name', 'is_background', 'new_counter', 'curr_obj_num', 'inst_color']  # 'inst_color' just keeps obj1's
-    custom_handled = ['pcd', 'bbox', 'clip_ft', 'text_ft', 'n_points']
+    custom_handled = ['pcd', 'bbox', 'clip_ft', 'dino_ft', 'text_ft', 'n_points']
 
     # Check for unhandled keys and throw an error if there are
     all_handled_keys = set(extend_attributes + add_attributes + skip_attributes + custom_handled)
@@ -243,6 +243,10 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     # Merge and normalize 'clip_ft'
     obj1['clip_ft'] = (obj1['clip_ft'] * n_obj1_det + obj2['clip_ft'] * n_obj2_det) / (n_obj1_det + n_obj2_det)
     obj1['clip_ft'] = F.normalize(obj1['clip_ft'], dim=0)
+
+    # Merge and normalize 'dino_ft'
+    obj1['dino_ft'] = (obj1['dino_ft'] * n_obj1_det + obj2['dino_ft'] * n_obj2_det) / (n_obj1_det + n_obj2_det)
+    obj1['dino_ft'] = F.normalize(obj1['dino_ft'], dim=0)
 
     # merge text_ft
     # obj2['text_ft'] = to_tensor(obj2['text_ft'], device)
@@ -772,6 +776,7 @@ def make_detection_list_from_pcd_and_gobs(
             'pcd': obj_pcds_and_bboxes[mask_idx]['pcd'],
             'bbox': obj_pcds_and_bboxes[mask_idx]['bbox'],
             'clip_ft': to_tensor(gobs['image_feats'][mask_idx]),
+            'dino_ft': to_tensor(gobs['dino_feats'][mask_idx]),
             # 'text_ft': to_tensor(gobs['text_feats'][mask_idx]),
             'num_obj_in_class': num_obj_in_class,
             'curr_obj_num': tracker.total_object_count,
@@ -1007,7 +1012,7 @@ def prepare_objects_save_vis(objects: MapObjectList, downsample_size: float=0.02
     for i in range(len(objects_to_save)):
         for k in list(objects_to_save[i].keys()):
             if k not in [
-                'pcd', 'bbox', 'clip_ft', 'text_ft', 'class_id', 'num_detections', 'inst_color'
+                'pcd', 'bbox', 'clip_ft', 'dino_ft', 'text_ft', 'class_id', 'num_detections', 'inst_color'
             ]:
                 del objects_to_save[i][k]
                 
@@ -1180,8 +1185,16 @@ def build_final_object_graph(objects, camera_positions, map_edges, frame_idx):
         )
         rel_type = "on top of" if iou > 0 else "next to"
 
+        # num_detections := number of frames in which both objects were
+        # observed together -- equals the number of times scenegraph_viz
+        # would actually draw this edge (rerun_realtime_mapping.py's
+        # per-frame viz loop only draws an edge when frame_idx is in both
+        # endpoints' image_idx).
+        frame_overlap = len(set(objects[subj]['image_idx']) & set(objects[obj_]['image_idx']))
+
         map_edges.add_or_update_edge(
             subj, obj_, rel_type, first_detected=frame_idx,
+            num_detections=frame_overlap,
             center_distance=float(np.linalg.norm(centers[subj] - centers[obj_])),
             center_diff=(centers[subj] - centers[obj_]).tolist(),
             surface_min_distance=d["distance"],

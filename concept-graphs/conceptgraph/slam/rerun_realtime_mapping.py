@@ -80,7 +80,7 @@ from conceptgraph.slam.mapping import (
     match_detections_to_objects,
     merge_obj_matches
 )
-from conceptgraph.utils.model_utils import compute_clip_features_batched
+from conceptgraph.utils.model_utils import compute_clip_features_batched, compute_dinov3_features_batched
 from conceptgraph.utils.general_utils import get_vis_out_path, cfg_to_dict, check_run_detections
 from conceptgraph.utils.scenegraph_viz import render_frame_scenegraph
 from conceptgraph.utils.visualize_full_scenegraph import load_scene_graph, render_full_scenegraph
@@ -216,9 +216,12 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             )
             clip_model = clip_model.to(cfg.device)
             clip_tokenizer = open_clip.get_tokenizer("ViT-H-14")
-            shared_models = (detection_model, sam_predictor, clip_model, clip_preprocess, clip_tokenizer)
+            dinov3_model = torch.hub.load(
+                cfg.dinov3_repo_dir, cfg.dinov3_model_name, source='local', weights=cfg.dinov3_checkpoint_path
+            ).to(cfg.device).eval().half()
+            shared_models = (detection_model, sam_predictor, clip_model, clip_preprocess, clip_tokenizer, dinov3_model)
         else:
-            detection_model, sam_predictor, clip_model, clip_preprocess, clip_tokenizer = shared_models
+            detection_model, sam_predictor, clip_model, clip_preprocess, clip_tokenizer, dinov3_model = shared_models
 
         # Set the classes for the detection model. cache_clip_model=False: the cached
         # self.clip_model (default cache_clip_model=True) is a real submodule of
@@ -334,6 +337,8 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             image_crops, image_feats, text_feats = compute_clip_features_batched(
                 image_rgb, curr_det, clip_model, clip_preprocess, clip_tokenizer, obj_classes.get_classes_arr(), cfg.device)
 
+            dino_feats = compute_dinov3_features_batched(image_crops, dinov3_model, cfg.device)
+
             # increment total object detections
             tracker.increment_total_detections(len(curr_det.xyxy))
 
@@ -348,6 +353,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 "classes": obj_classes.get_classes_arr(),
                 "image_crops": image_crops,
                 "image_feats": image_feats,
+                "dino_feats": dino_feats,
                 "text_feats": text_feats,
                 "detection_class_labels": detection_class_labels,
                 "labels": labels,

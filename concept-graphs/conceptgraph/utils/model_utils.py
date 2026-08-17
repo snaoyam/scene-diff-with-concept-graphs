@@ -1,6 +1,16 @@
 import numpy as np
 import torch
 from PIL import Image
+from torchvision.transforms import v2
+
+# Official DINOv3 image transform for LVD-1689M weights (dinov3/README.md "Image
+# transforms" section) -- resize_size=256 is the README's own default.
+dinov3_preprocess = v2.Compose([
+    v2.ToImage(),
+    v2.Resize((256, 256), antialias=True),
+    v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+])
 
 # @profile
 def compute_clip_features_batched(image, detections, clip_model, clip_preprocess, clip_tokenizer, classes, device):
@@ -61,3 +71,25 @@ def compute_clip_features_batched(image, detections, clip_model, clip_preprocess
     text_feats = []
 
     return image_crops, image_feats, text_feats
+
+
+def compute_dinov3_features_batched(image_crops, dinov3_model, device):
+    '''
+    DINOv3 appearance embedding per detection, reusing the same padded crops
+    compute_clip_features_batched() already produced (image_crops) so both
+    embeddings come from the identical crop region. Returns the global
+    embedding (x_norm_clstoken), L2-normalized like clip_ft.
+    '''
+    if not image_crops:
+        return np.empty((0, 0), dtype=np.float32)
+
+    preprocessed_images_batch = torch.cat(
+        [dinov3_preprocess(crop).unsqueeze(0) for crop in image_crops], dim=0
+    ).to(device, dtype=torch.float16)
+
+    with torch.no_grad():
+        dino_features = dinov3_model.forward_features(preprocessed_images_batch)
+        cls_token = dino_features["x_norm_clstoken"]
+        cls_token /= cls_token.norm(dim=-1, keepdim=True)
+
+    return cls_token.cpu().numpy()
