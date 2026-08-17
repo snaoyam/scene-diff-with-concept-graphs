@@ -2,7 +2,6 @@ import json
 from openai import OpenAI
 import os
 import base64
-from pathlib import Path
 
 from PIL import Image
 import numpy as np
@@ -14,50 +13,6 @@ import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
-
-system_prompt_1 = '''
-You are an agent specialized in describing the spatial relationships between objects in an annotated image.
-
-You will be provided with an annotated image and a list of labels for the annotations. Your task is to determine the spatial relationships between the annotated objects in the image, and return a list of these relationships in the correct list of tuples format as follows:
-[("object1", "spatial relationship", "object2"), ("object3", "spatial relationship", "object4"), ...]
-
-Your options for the spatial relationship are "on top of" and "next to".
-
-For example, you may get an annotated image and a list such as 
-["cup 3", "book 4", "clock 5", "table 2", "candle 7", "music stand 6", "lamp 8"]
-
-Your response should be a description of the spatial relationships between the objects in the image. 
-An example to illustrate the response format:
-[("book 4", "on top of", "table 2"), ("cup 3", "next to", "book 4"), ("lamp 8", "on top of", "music stand 6")]
-'''
-
-'''
-You are an agent specialized in identifying and describing objects that are placed "on top of" each other in an annotated image. You always output a list of tuples that describe the "on top of" spatial relationships between the objects, and nothing else. When in doubt, output an empty list.
-
-When provided with an annotated image and a corresponding list of labels for the annotations, your primary task is to determine and return the "on top of" spatial relationships between the annotated objects. Your responses should be formatted as a list of tuples, specifically highlighting objects that rest on top of others, as follows:
-[("object1", "on top of", "object2"), ...]
-'''
-
-# Deals with "on top of", "under", and "next to" relations
-system_prompt_only_top = '''
-You are an agent specializing in identifying the physical and spatial relationships in annotated images for 3D mapping.
-
-In the images, each object is annotated with a bright numeric id (i.e. a number) and a corresponding colored contour outline. Your task is to analyze the images and output a list of tuples describing the physical relationships between objects. Format your response as follows: [("1", "relation type", "2"), ...]. When uncertain, return an empty list.
-
-Note that you are describing the **physical relationships** between the **objects inside** the image.
-
-You will also be given a text list of the numeric ids of the objects in the image. The list will be in the format: ["1: name1", "2: name2", "3: name3" ...], only output the physical relationships between the objects in the list.
-
-The relation types you must report are:
-- phyically placed on top of: ("object x", "on top of", "object y")
-- phyically placed underneath: ("object x", "under", "object y")
-- physically beside/adjacent to, touching or near each other with neither on top of the other: ("object x", "next to", "object y")
-
-An illustrative example of the expected response format might look like this:
-[("object 1", "on top of", "object 2"), ("object 3", "under", "object 2"), ("object 4", "next to", "object 1")]. Do not put the names of the objects in your response, only the numeric ids.
-
-Do not include any other information in your response. Only output a parsable list of tuples describing the given physical relationships between objects in the image.
-'''
 
 # For captions
 system_prompt_captions = '''
@@ -103,8 +58,6 @@ Your response should be a JSON object with the format:
 
 Do not include any additional information in your response.
 '''
-
-system_prompt = system_prompt_only_top
 
 # 모델 이름을 로컬 vLLM 서버에 로드된 모델로 변경
 gpt_model = "Qwen/Qwen3-VL-8B-Instruct"
@@ -202,31 +155,6 @@ def consolidate_captions(client: OpenAI, captions: list):
 
     return consolidated_caption
     
-def extract_list_of_tuples(text: str):
-    # Pattern to match a list of tuples, considering a list that starts with '[' and ends with ']'
-    # and contains any characters in between, including nested lists/tuples.
-    text = text.replace('\n', ' ')
-    pattern = r'\[.*?\]'
-    
-    # Search for the pattern in the text
-    match = re.search(pattern, text)
-    if match:
-        # Extract the matched string
-        list_str = match.group(0)
-        try:
-            # Convert the string to a list of tuples
-            result = ast.literal_eval(list_str)
-            if isinstance(result, list):  # Ensure it is a list
-                return result
-        except (ValueError, SyntaxError):
-            # Handle cases where the string cannot be converted
-            print("Found string cannot be converted to a list of tuples.")
-            return []
-    else:
-        # No matching pattern found
-        print("No list of tuples found in the text.")
-        return []
-    
 def vlm_extract_object_captions(text: str):
     # Replace newlines with spaces for uniformity
     text = text.replace('\n', ' ')
@@ -261,78 +189,9 @@ def vlm_extract_object_captions(text: str):
         print("No list of objects found in the text.")
         return []
     
-def save_vlm_response_for_debug(image_path: str, response_text: str):
-    """Debug aid: dump the raw VLM response text next to the annotated image it was
-    generated from, so relation extraction failures can be inspected after a run."""
-    response_path = Path(image_path).with_name(Path(image_path).stem + "_relations_response.txt")
-    try:
-        response_path.write_text(response_text or "")
-    except OSError as e:
-        print(f"Could not save VLM response to {response_path}: {e}")
-
-
-def get_obj_rel_from_image_gpt4v(client: OpenAI, image_path: str, label_list: list):
-    # Getting the base64 string
-    base64_image = encode_image_for_openai(image_path)
-    
-    global system_prompt
-    global gpt_model
-    
-    user_query = f"Here is the list of labels for the annotations of the objects in the image: {label_list}. Please describe the spatial relationships between the objects in the image."
-    
-    
-    vlm_answer = []
-    try:
-        response = client.chat.completions.create(
-            model=f"{gpt_model}",
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt_only_top
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}",
-                            },
-                        },
-                    ],
-                },
-                {
-                    "role": "user",
-                    "content": user_query
-                }
-            ]
-        )
-        
-        vlm_answer_str = response.choices[0].message.content
-        # print(f"Line 113, vlm_answer_str: {vlm_answer_str}")
-
-        save_vlm_response_for_debug(image_path, vlm_answer_str)
-
-        vlm_answer = extract_list_of_tuples(vlm_answer_str)
-
-    except Exception as e:
-        print(f"An error occurred: {str(e)}")
-        print(f"Setting vlm_answer to an empty list.")
-        save_vlm_response_for_debug(image_path, f"ERROR: {e}")
-        vlm_answer = []
-    # print(f"Line 68, user_query: {user_query}")
-    # print(f"Line 97, vlm_answer: {vlm_answer}")
-    
-    
-    return vlm_answer
-
-    
 def get_obj_captions_from_image_gpt4v(client: OpenAI, image_path: str, label_list: list):
     # Getting the base64 string
     base64_image = encode_image_for_openai(image_path)
-    
-    global system_prompt
-    
 
     user_query = f"Here is the list of labels for the annotations of the objects in the image: {label_list}. Please accurately caption the objects in the image."
     

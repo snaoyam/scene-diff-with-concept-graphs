@@ -51,6 +51,7 @@ for scene_id in "${SCENE_PAIRS[@]}"; do
         rm -rf "$scene_output_dir/benchmark_result"
     fi
 
+    echo
     echo "=== running [$scene_id] ==="
     mkdir -p "$scene_output_dir"
 
@@ -82,6 +83,7 @@ for scene_id in "${SCENE_PAIRS[@]}"; do
     } > "$scene_output_dir/terminal-outputs-$timestamp.txt" 2>&1
 
     echo "[$scene_id] complete"
+    echo
 done
 
 echo

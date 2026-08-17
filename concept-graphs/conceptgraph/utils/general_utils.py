@@ -12,7 +12,7 @@ from conceptgraph.utils.ious import mask_subtract_contained
 from conceptgraph.utils.vis import save_video_from_frames
 import supervision as sv
 import scipy.ndimage as ndi 
-from conceptgraph.utils.vlm import get_obj_captions_from_image_gpt4v, get_obj_rel_from_image_gpt4v, vlm_extract_object_captions
+from conceptgraph.utils.vlm import get_obj_captions_from_image_gpt4v, vlm_extract_object_captions
 import cv2
 import re
 
@@ -213,45 +213,6 @@ def annotate_for_vlm(
 
     return annotated_image, sorted_indices
 
-def plot_edges_from_vlm(image: np.ndarray, edges, detections: sv.Detections, obj_classes, labels: list[str], sorted_indices: list[int], save_path=None) -> np.ndarray:
-    annotated_image = image.copy()
-    
-    # Create a map from label to mask centroid and color for quick lookup
-    label_to_centroid_color = {}
-    for idx in sorted_indices:
-        mask = detections.mask[idx]
-        label_num = labels[idx].split(' ')[-1]  # Assuming label format is 'object X'
-        obj_color = obj_classes.get_class_color(int(detections.class_id[idx]))
-        obj_color = tuple([int(c * 255) for c in obj_color])  # Convert to BGR
-    
-        # Determine the centroid of the mask
-        ys, xs = np.nonzero(mask)
-        if ys.size > 0 and xs.size > 0:
-            y_center, x_center = ndi.center_of_mass(mask)
-            centroid = (int(x_center), int(y_center))
-        else:
-            # Fallback to bbox center if mask is empty
-            bbox = detections.xyxy[idx]
-            centroid = (int((bbox[0] + bbox[2]) / 2), int((bbox[1] + bbox[3]) / 2))
-        
-        label_to_centroid_color[label_num] = (centroid, obj_color)
-    
-    # Draw edges based on relationships specified
-    for edge in edges:
-        src_label, _, dst_label = edge
-        src_label = str(src_label) # Assuming label is int of object_index
-        dst_label = str(dst_label)
-        if src_label in label_to_centroid_color and dst_label in label_to_centroid_color:
-            src_centroid, _ = label_to_centroid_color[src_label]
-            dst_centroid, dst_color = label_to_centroid_color[dst_label]
-            # Draw line from source to destination object with the color of the destination object
-            cv2.line(annotated_image, src_centroid, dst_centroid, dst_color, 2)
-    
-    if save_path:
-            cv2.imwrite(str(save_path), annotated_image)
-            
-    return annotated_image
-
 def filter_detections(
     image,
     detections: sv.Detections, 
@@ -368,9 +329,12 @@ def get_vlm_annotated_image_path(det_exp_vis_path, color_path, w_edges=False, su
     )
     return str(vis_save_path)
 
-def make_vlm_edges_and_captions(image, curr_det, obj_classes, detection_class_labels, det_exp_vis_path, color_path, make_edges_flag, openai_client):
+def get_vlm_captions(image, curr_det, obj_classes, detection_class_labels, det_exp_vis_path, color_path, make_captions_flag, openai_client):
     """
-    Process detections by filtering, annotating, and extracting object relationships.
+    Filter and annotate detections, then get per-object captions from a VLM.
+    Object relations are no longer sourced from a VLM here -- they're derived
+    from 3D geometry once, after the whole frame loop (slam/utils.py's
+    build_final_object_graph), from the final point cloud.
 
     Args:
         image (numpy.ndarray): The image on which detections are performed.
@@ -379,34 +343,28 @@ def make_vlm_edges_and_captions(image, curr_det, obj_classes, detection_class_la
         detection_class_labels (list): Labels for each detection class.
         det_exp_vis_path (str): Directory path for saving visualizations.
         color_path (str): Additional path element for creating unique save paths.
-        make_edges_flag (bool): Flag indicating whether to create edges between detected objects.
-        openai_client (OpenAIClient): Client object for OpenAI used in relationship extraction.
+        make_captions_flag (bool): Flag indicating whether to caption detected objects.
+        openai_client (OpenAIClient): Client object for OpenAI used in captioning.
 
     Returns:
         tuple: A tuple containing the following elements:
-            - detection_class_labels (list): The original labels provided for detection classes.
             - labels (list): The labels after filtering detections.
-            - edges (list): List of edges between detected objects if `make_edges_flag` is True, otherwise an empty list.
-            - edge_image (numpy.ndarray): Annotated image with edges plotted if `make_edges_flag` is True, otherwise None.
-            - captions (list): List of captions for each detected object if `make_edges_flag` is True, otherwise None.
+            - captions (list): List of captions for each detected object if `make_captions_flag` is True, otherwise None.
     """
     # Filter the detections
     filtered_detections, labels = filter_detections(
         image=image,
-        detections=curr_det, 
+        detections=curr_det,
         classes=obj_classes,
         top_x_detections=150000,
         confidence_threshold=0.00001,
         given_labels=detection_class_labels,
     )
-    
-    edges = []
-    edge_image = None
+
     captions = None
-    if make_edges_flag:
+    if make_captions_flag:
         vis_save_path_for_vlm = get_vlm_annotated_image_path(det_exp_vis_path, color_path)
-        vis_save_path_for_vlm_edges = get_vlm_annotated_image_path(det_exp_vis_path, color_path, w_edges=True)
-        annotated_image_for_vlm, sorted_indices = annotate_for_vlm(image, filtered_detections, obj_classes, labels, save_path=vis_save_path_for_vlm)
+        annotated_image_for_vlm, _ = annotate_for_vlm(image, filtered_detections, obj_classes, labels, save_path=vis_save_path_for_vlm)
 
         label_list = []
         for label in labels:
@@ -417,12 +375,10 @@ def make_vlm_edges_and_captions(image, curr_det, obj_classes, detection_class_la
 
         cv2.imwrite(str(vis_save_path_for_vlm), annotated_image_for_vlm)
         print(f"Line 313, vis_save_path_for_vlm: {vis_save_path_for_vlm}")
-        
-        edges = get_obj_rel_from_image_gpt4v(openai_client, vis_save_path_for_vlm, label_list)
+
         captions = get_obj_captions_from_image_gpt4v(openai_client, vis_save_path_for_vlm, label_list)
-        edge_image = plot_edges_from_vlm(annotated_image_for_vlm, edges, filtered_detections, obj_classes, labels, sorted_indices, save_path=vis_save_path_for_vlm_edges)
-    
-    return labels, edges, edge_image, captions
+
+    return labels, captions
     
 def measure_time(func):
     def wrapper(*args, **kwargs):
@@ -644,22 +600,30 @@ def save_edge_json(exp_suffix, exp_out_path, objects, edges):
         obj1_idx = curr_edge.obj1_idx
         obj2_idx = curr_edge.obj2_idx
         rel_type = curr_edge.rel_type
-        num_det = curr_edge.num_detections
-        obj1_class_name = objects[obj1_idx]['class_name'] 
+        obj1_class_name = objects[obj1_idx]['class_name']
         obj2_class_name = objects[obj2_idx]['class_name']
         obj1_curr_obj_num = objects[obj1_idx]['curr_obj_num']
         obj2_curr_obj_num = objects[obj2_idx]['curr_obj_num']
-        # print(f"Line 732, {obj1_class_name} {rel_type} {obj2_class_name}, num_det: {num_det}")
-        
+
         edj_dict = {
             "edge_id": curr_idx,
             "edge_description": f"{obj1_class_name} {rel_type} {obj2_class_name}",
-            "num_detections": num_det,
+            # Kept for utils/visualize_full_scenegraph.py compatibility (edge merging,
+            # rendered line width) -- always 1 now that edges are computed once from the
+            # final point cloud rather than reconfirmed across frames.
+            "num_detections": curr_edge.num_detections,
             "object_1_id": obj1_curr_obj_num,
             "object_1_tag": obj1_class_name,
             "object_2_id": obj2_curr_obj_num,
             "object_2_tag": obj2_class_name,
             "relationship": rel_type,
+            "center_distance": curr_edge.center_distance,
+            "center_diff": curr_edge.center_diff,
+            "surface_min_distance": curr_edge.surface_min_distance,
+            "surface_diff": curr_edge.surface_diff,
+            "iou": curr_edge.iou,
+            "giou": curr_edge.giou,
+            "iom": curr_edge.iom,
         }
         json_edge_list[f"edge_{curr_idx}"] = edj_dict
         
@@ -669,8 +633,7 @@ def save_edge_json(exp_suffix, exp_out_path, objects, edges):
         json.dump(json_edge_list, f, indent=2)
     print(f"Saved edge JSON to {json_edge_out_path}")
 
-
-def save_pointcloud(exp_suffix, exp_out_path, cfg, objects, obj_classes, edges = None):
+def save_pointcloud(exp_suffix, exp_out_path, cfg, objects, obj_classes, edges=None, up_axis=None, up_direction=None):
     """
     Saves the point cloud data to a .pkl.gz file.
 
@@ -679,6 +642,9 @@ def save_pointcloud(exp_suffix, exp_out_path, cfg, objects, obj_classes, edges =
     - exp_out_path (Path or str): Output path for the experiment's saved files.
     - objects: The objects to save, assumed to have a `to_serializable()` method.
     - obj_classes: The object classes, assumed to have `get_classes_arr()` and `get_class_color_dict_by_index()` methods.
+    - up_axis, up_direction: detect_up_vector()'s result (slam/utils.py), persisted here so downstream
+      debug tooling (e.g. convert_concept_graphs_to_scene_diff_benchmark_data.py's moved-objects plot) can
+      reuse this camera-grounded estimate instead of re-deriving a weaker one from the saved points alone.
     """
     print("saving map...")
     # Prepare the results dictionary
@@ -688,6 +654,8 @@ def save_pointcloud(exp_suffix, exp_out_path, cfg, objects, obj_classes, edges =
         'class_names': obj_classes.get_classes_arr(),
         'class_colors': obj_classes.get_class_color_dict_by_index(),
         'edges': edges.to_serializable() if edges is not None else None,
+        'up_axis': up_axis,
+        'up_direction': up_direction,
     }
 
     # Define the save path for the point cloud

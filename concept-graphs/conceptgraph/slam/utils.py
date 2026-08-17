@@ -3,8 +3,8 @@ import copy
 import json
 import logging
 from pathlib import Path
-# from conceptgraph.utils.logging_metrics import track_denoising, 
-from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker 
+# from conceptgraph.utils.logging_metrics import track_denoising,
+from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker
 import cv2
 # from line_profiler import profile
 
@@ -12,6 +12,7 @@ import numpy as np
 from omegaconf import DictConfig
 import omegaconf
 import open3d as o3d
+from scipy.spatial import cKDTree
 import torch
 
 import torch.nn.functional as F
@@ -1012,87 +1013,180 @@ def prepare_objects_save_vis(objects: MapObjectList, downsample_size: float=0.02
                 
     return objects_to_save.to_serializable()
 
-def edge_is_geometrically_plausible(obj1, obj2, max_gap_factor):
+def detect_up_vector(objects, camera_positions):
     '''
-    VLM edges only look at the flat 2D image, so two objects that merely
-    overlap in screen space (e.g. one near the camera, one far in the
-    background) can get labeled "next to"/"on top of" despite being nowhere
-    near each other in 3D. This is a cheap sanity check on the actual 3D
-    geometry: reject the edge if the gap between the two objects' bounding
-    boxes (center distance minus each box's approximate radius) is more than
-    `max_gap_factor` times their combined size. Relative to object size
-    (rather than an absolute distance) so it works regardless of a dataset's
-    coordinate scale/units.
+    Auto-detects which world-frame axis is "up" and which sign along it is
+    "down", since neither is documented anywhere for this Pi3-estimated
+    coordinate frame.
+
+    Axis: among X/Y/Z, the up-axis is the one with the smallest 95% spread
+    (97.5th minus 2.5th percentile) of the combined point cloud accumulated
+    so far -- most rooms are wider/longer than they are tall, and percentiles
+    (rather than raw min/max) keep this robust to outlier points.
+
+    Sign: compared to the camera positions' median value on that axis,
+    whichever side has more point-cloud mass is "down" -- scene cameras tend
+    to tilt down more than up, capturing more content below eye height.
+
+    Called once, from build_final_object_graph(), after all frames are
+    processed and `objects` holds the final merged/denoised point clouds --
+    not progressively per-frame, so the estimate isn't skewed by a
+    partially-observed scene.
+
+    Returns (up_axis: int, up_direction: float) such that
+    point[up_axis] * up_direction increases going physically "up".
     '''
-    center1, center2 = np.asarray(obj1['bbox'].center), np.asarray(obj2['bbox'].center)
-    radius1 = np.mean(obj1['bbox'].extent) / 2.0
-    radius2 = np.mean(obj2['bbox'].extent) / 2.0
-    surface_gap = np.linalg.norm(center1 - center2) - radius1 - radius2
-    max_gap = max_gap_factor * (radius1 + radius2)
-    return surface_gap <= max_gap
+    all_points = np.concatenate(
+        [np.asarray(o['pcd'].points) for o in objects if len(o['pcd'].points) > 0], axis=0
+    )
+    spreads = [np.subtract(*np.percentile(all_points[:, ax], [97.5, 2.5])) for ax in range(3)]
+    up_axis = int(np.argmin(spreads))
+
+    camera_ref = np.median(camera_positions[:, up_axis])
+    below = np.sum(all_points[:, up_axis] < camera_ref)
+    above = np.sum(all_points[:, up_axis] > camera_ref)
+    up_direction = 1.0 if below >= above else -1.0
+    return up_axis, up_direction
 
 
-def process_edges(match_indices, gobs, initial_objects_count, objects, map_edges, frame_idx):
-    # Step 1: Generate match_indices_w_new_obj with indices for new objects
-    # Initial count of objects before processing new detections
-    new_object_count = 0  # Counter for new objects
+def compute_robust_bbox(points, trim_percentile=2.5):
+    '''
+    Per-axis [trim_percentile, 100-trim_percentile] percentile range -- an
+    outlier-robust bounding box (the "95%-confidence" bbox). Reused both as
+    the reference center for compute_object_radius() and as the up-axis-
+    excluded horizontal footprint for compute_2d_overlap_metrics().
+    Returns (lo, hi), each shape (3,).
+    '''
+    lo = np.percentile(points, trim_percentile, axis=0)
+    hi = np.percentile(points, 100 - trim_percentile, axis=0)
+    return lo, hi
 
-    # Create a list of match indices with new objects index instead of None
-    match_indices_w_new_obj = []
-    for match_index in match_indices:
-        if match_index is None:
-            # Assign the future index for new objects and increment the counter
-            new_obj_index = initial_objects_count + new_object_count
-            match_indices_w_new_obj.append(new_obj_index)
-            new_object_count += 1
-        else:
-            match_indices_w_new_obj.append(match_index)
 
-    # Step 2: Create a mapping from detection_class_labels numbers to the detection_list indices
-    detection_label_to_index = {}
-    for index, detection_class_label in enumerate(gobs['detection_class_labels']):
-        label_key = detection_class_label.split(" ")[-1]
-        detection_label_to_index[label_key] = index
-    
-    # Step 3: Use match_indices_w_new_obj for translating 2D edges to indices in the existing objects list
-    curr_edges_3d_by_index = []
-    for edge in gobs['edges']:
-        obj1_label, relation, obj2_label = edge
-        obj1_index = detection_label_to_index.get(obj1_label, None)
-        obj2_index = detection_label_to_index.get(obj2_label, None)        
-        
-        # check that the object indices are not out of range
-        if (obj1_index is None) or (obj1_index >= len(match_indices_w_new_obj)):
+def compute_object_radius(points, robust_center):
+    '''
+    Mean distance from `robust_center` to each of the object's points.
+    `robust_center` should be a robust bbox center (compute_robust_bbox), not
+    the raw point-cloud centroid -- the centroid is biased toward whichever
+    side of the object the camera happened to scan more densely (occluded
+    faces are never observed), while the bbox center isn't.
+    '''
+    return float(np.linalg.norm(np.asarray(points) - robust_center, axis=1).mean())
+
+
+def robust_min_surface_distance(points1, points2, percentile=5):
+    '''
+    A noise-robust "closest surface" distance between two point clouds.
+    Naively taking the single literal closest point pair is easily distorted
+    by one stray/noisy point, so instead: for every point in points1, find its
+    nearest neighbor in points2 (and vice versa, via KDTree -- O((N+M) log)
+    instead of a full O(N*M) pairwise matrix), concatenate both directions'
+    distances, and pick the point pair at the `percentile`-th rank of that
+    combined, sorted array. Using an actual ranked data point (not an
+    interpolated percentile value) means the returned distance always exactly
+    matches the returned point pair's separation.
+    Returns (distance, point1, point2).
+    '''
+    tree1, tree2 = cKDTree(points1), cKDTree(points2)
+    d_1to2, nn_1to2 = tree2.query(points1)
+    d_2to1, nn_2to1 = tree1.query(points2)
+    candidates = [(points1[i], points2[nn_1to2[i]], d_1to2[i]) for i in range(len(points1))]
+    candidates += [(points1[nn_2to1[j]], points2[j], d_2to1[j]) for j in range(len(points2))]
+    dists = np.array([d for _, _, d in candidates])
+    rank = int(round(percentile / 100 * (len(dists) - 1)))
+    chosen = candidates[np.argsort(dists)[rank]]
+    return float(chosen[2]), np.asarray(chosen[0]), np.asarray(chosen[1])
+
+
+def compute_2d_overlap_metrics(lo1, hi1, lo2, hi2):
+    '''
+    IoU / GIoU / IoM between two axis-aligned 2D rectangles, each given as
+    (lo, hi) corner pairs (e.g. a robust bbox's horizontal-plane axes).
+    '''
+    inter = np.clip(np.minimum(hi1, hi2) - np.maximum(lo1, lo2), 0, None)
+    inter_area = inter[0] * inter[1]
+    area1, area2 = np.prod(hi1 - lo1), np.prod(hi2 - lo2)
+    union = area1 + area2 - inter_area
+    iou = inter_area / union if union > 0 else 0.0
+    iom = inter_area / min(area1, area2) if min(area1, area2) > 0 else 0.0
+    enc = np.maximum(hi1, hi2) - np.minimum(lo1, lo2)
+    enc_area = enc[0] * enc[1]
+    giou = iou - (enc_area - union) / enc_area if enc_area > 0 else iou
+    return float(iou), float(giou), float(iom)
+
+
+def build_final_object_graph(objects, camera_positions, map_edges, frame_idx):
+    '''
+    Builds the whole scene's object graph once, from the final (fully
+    merged/denoised) point clouds, after all frames have been processed --
+    replacing the old per-frame incremental edge computation.
+
+    Connectivity: object i and j get an edge iff their robust_min_surface_distance
+    is <= n * (radius_i + radius_j), where n is auto-selected as the smallest
+    value that leaves no object isolated (n = the largest, over all objects,
+    of that object's own smallest distance/radius-sum ratio to any other object).
+
+    Relation label: the taller (up-axis) object is always the subject
+    (object_1). "on top of" if the two objects' horizontal-footprint IoU > 0
+    (i.e. they overlap at all when looking straight down the up-axis),
+    "next to" otherwise.
+
+    Returns (map_edges, up_axis, up_direction) -- the detect_up_vector() result
+    is returned alongside map_edges so callers can persist it (e.g. into the
+    saved pcd file) for reuse by downstream debug tooling instead of having
+    them re-derive a weaker, camera-position-unaware estimate.
+    '''
+    if len(objects) < 2:
+        return map_edges, None, None
+
+    up_axis, up_direction = detect_up_vector(objects, camera_positions)
+    horiz_axes = [a for a in range(3) if a != up_axis]
+
+    points_list = [np.asarray(o['pcd'].points) for o in objects]
+    robust_bboxes = [compute_robust_bbox(pts) for pts in points_list]
+    centers = [(lo + hi) / 2.0 for lo, hi in robust_bboxes]
+    radii = [compute_object_radius(pts, c) for pts, c in zip(points_list, centers)]
+
+    n_obj = len(objects)
+    pair_data = {}
+    for i in range(n_obj):
+        for j in range(i + 1, n_obj):
+            dist, p1, p2 = robust_min_surface_distance(points_list[i], points_list[j])
+            ratio = dist / (radii[i] + radii[j]) if (radii[i] + radii[j]) > 0 else float("inf")
+            pair_data[(i, j)] = {"distance": dist, "p1": p1, "p2": p2, "ratio": ratio}
+
+    # Smallest n that leaves no object isolated = the largest, over all
+    # objects, of that object's own nearest-neighbor ratio.
+    per_obj_min_ratio = [float("inf")] * n_obj
+    for (i, j), d in pair_data.items():
+        per_obj_min_ratio[i] = min(per_obj_min_ratio[i], d["ratio"])
+        per_obj_min_ratio[j] = min(per_obj_min_ratio[j], d["ratio"])
+    n = max(per_obj_min_ratio) if n_obj > 0 else 0.0
+    print(f"Auto-selected edge distance multiplier n={n:.3f} (no isolated objects)")
+
+    up_vec = np.eye(3)[up_axis]
+    for (i, j), d in pair_data.items():
+        if d["ratio"] > n:
             continue
-        if (obj2_index is None) or (obj2_index >= len(match_indices_w_new_obj)):
-            continue
-        
-        # Directly map 2D detection indices to object list indices using match_indices_w_new_obj
-        obj1_objects_index = match_indices_w_new_obj[obj1_index] if obj1_index is not None else None
-        obj2_objects_index = match_indices_w_new_obj[obj2_index] if obj2_index is not None else None
-        
-        if obj1_objects_index >= len(objects) or obj2_objects_index >= len(objects):
-            continue
 
-        curr_edges_3d_by_index.append((obj1_objects_index, relation, obj2_objects_index))
+        height_i = np.dot(centers[i], up_vec) * up_direction
+        height_j = np.dot(centers[j], up_vec) * up_direction
+        subj, obj_ = (i, j) if height_i >= height_j else (j, i)
+        p_subj, p_obj = (d["p1"], d["p2"]) if subj == i else (d["p2"], d["p1"])
 
-    # print(f"Line 624, curr_edges_3d_by_index: {curr_edges_3d_by_index}")
-    
-    # Add the new edges to the map
-    for (obj_1_idx, rel_type, obj_2_idx) in curr_edges_3d_by_index:
-        if obj_1_idx == obj_2_idx: # skip loop edges
-            continue
-        map_edges.add_or_update_edge(obj_1_idx, obj_2_idx, rel_type, frame_idx)
-        
-    # Just making a copy of the edges by object number for viz
-    map_edges_by_curr_obj_num = []
-    for (obj1_idx, obj2_idx), map_edge in map_edges.edges_by_index.items():
-        # check if the idxes are more than the length of the objects, if so, continue
-        if obj1_idx >= len(objects) or obj2_idx >= len(objects):
-            continue
-        obj1_curr_obj_num = objects[obj1_idx]['curr_obj_num']
-        obj2_curr_obj_num = objects[obj2_idx]['curr_obj_num']
-        rel_type = map_edge.rel_type
-        map_edges_by_curr_obj_num.append((obj1_curr_obj_num, rel_type, obj2_curr_obj_num))
-        
-    return map_edges
+        lo_s, hi_s = robust_bboxes[subj]
+        lo_o, hi_o = robust_bboxes[obj_]
+        iou, giou, iom = compute_2d_overlap_metrics(
+            lo_s[horiz_axes], hi_s[horiz_axes], lo_o[horiz_axes], hi_o[horiz_axes]
+        )
+        rel_type = "on top of" if iou > 0 else "next to"
+
+        map_edges.add_or_update_edge(
+            subj, obj_, rel_type, first_detected=frame_idx,
+            center_distance=float(np.linalg.norm(centers[subj] - centers[obj_])),
+            center_diff=(centers[subj] - centers[obj_]).tolist(),
+            surface_min_distance=d["distance"],
+            surface_diff=(p_subj - p_obj).tolist(),
+            iou=iou, giou=giou, iom=iom,
+        )
+
+    return map_edges, up_axis, up_direction

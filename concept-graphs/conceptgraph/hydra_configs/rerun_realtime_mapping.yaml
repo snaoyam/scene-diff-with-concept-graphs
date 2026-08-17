@@ -114,20 +114,11 @@ force_detection: !!bool False
 save_detections: !!bool True
 
 make_edges: !!bool True
-# Outlier-edge pruning window: an edge is deleted if it isn't re-detected at
-# least once within this many processed frames of its first detection. Scale
-# this up when frames are sampled more densely (e.g. lower resample_rate in
-# scenediff_to_conceptgraph.py) so the window still covers a similar amount
-# of real time.
-edge_prune_window: 25
-
-# Sanity check on edge geometry: the VLM only looks at the flat 2D image, so
-# two objects that happen to overlap on screen (e.g. one near the camera, one
-# in the background) can get mislabeled as "next to"/"on top of" despite
-# being far apart in 3D. An edge is dropped if the 3D gap between the two
-# objects' bounding boxes exceeds this factor times their combined size.
-# Lower = stricter (fewer, more locally-plausible edges); <= 0 disables the check.
-edge_max_gap_factor: -1
+# Edge relations are built once, after all frames are processed, from the
+# final point cloud (build_final_object_graph in slam/utils.py): objects get
+# an edge iff their robust min surface distance is <= n * (combined radius),
+# where n is auto-selected per scene as the smallest value that leaves no
+# object isolated -- no manual tuning knob needed here.
 
 stride: 1 # scenediff frames are already sparsely sampled during preprocessing
 exp_suffix: r_mapping_pilot # helpful label to identify your mapping experiment

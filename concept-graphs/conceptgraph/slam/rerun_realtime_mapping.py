@@ -29,15 +29,15 @@ from collections import Counter
 # Local application/library specific imports
 from conceptgraph.utils.optional_wandb_wrapper import OptionalWandB
 from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker
-from conceptgraph.utils.vlm import consolidate_captions, get_obj_rel_from_image_gpt4v, get_openai_client
+from conceptgraph.utils.vlm import consolidate_captions, get_openai_client
 from conceptgraph.utils.ious import mask_subtract_contained
 from conceptgraph.utils.general_utils import (
     ObjectClasses,
     get_det_out_path,
     get_exp_out_path,
+    get_vlm_captions,
     load_saved_detections,
-    make_vlm_edges_and_captions,
-    measure_time, 
+    measure_time,
     save_detection_results,
     save_edge_json, 
     save_hydra_config,
@@ -58,7 +58,7 @@ from conceptgraph.utils.vis import (
 )
 from conceptgraph.slam.slam_classes import MapEdgeMapping, MapObjectList
 from conceptgraph.slam.utils import (
-    edge_is_geometrically_plausible,
+    build_final_object_graph,
     filter_gobs,
     filter_objects,
     get_bounding_box,
@@ -69,7 +69,6 @@ from conceptgraph.slam.utils import (
     detections_to_obj_pcd_and_bbox,
     prepare_objects_save_vis,
     process_cfg,
-    process_edges,
     process_pcd,
     processing_needed,
     resize_gobs
@@ -86,6 +85,7 @@ from conceptgraph.utils.general_utils import get_vis_out_path, cfg_to_dict, chec
 from conceptgraph.utils.scenegraph_viz import render_frame_scenegraph
 from conceptgraph.utils.visualize_full_scenegraph import load_scene_graph, render_full_scenegraph
 
+VERSION_TEXT = "modified concept graph 1"
 
 # Disable torch gradient computation
 torch.set_grad_enabled(False)
@@ -94,7 +94,7 @@ torch.set_grad_enabled(False)
 @hydra.main(version_base=None, config_path="../hydra_configs/", config_name="rerun_realtime_mapping")
 # @profile
 def main(cfg : DictConfig):
-    print("===== version original concept graph =====")
+    print(f"===== version {VERSION_TEXT} =====")
     # OmegaConf.set_struct(cfg, False)
     # cfg.image_height = 512
     # cfg.image_width = 512
@@ -157,6 +157,11 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     )
     # cam_K = dataset.get_cam_K()
 
+    # Full camera trajectory, used by detect_up_vector() to figure out which
+    # side of the up-axis is "down" (see slam/utils.py). Available up front --
+    # dataset.poses is pre-loaded for the whole sequence, not per-frame.
+    camera_positions = dataset.poses[:, :3, 3].cpu().numpy()
+
     objects = MapObjectList(device=cfg.device)
     map_edges = MapEdgeMapping(objects)
 
@@ -189,7 +194,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     det_exp_vis_path = get_vis_out_path(det_exp_path)
 
     if run_detections:
-        print("\n".join(["Running detections..."] * 10))
+        print("\n".join([f"Running detections...version: {VERSION_TEXT}"] * 10))
         det_exp_path.mkdir(parents=True, exist_ok=True)
 
         ## Initialize the detection models, reusing them across scene variants if already loaded
@@ -237,7 +242,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         if detection_model.predictor:
             detection_model.predictor.model.names = detection_classes
     else:
-        print("\n".join(["NOT Running detections..."] * 10))
+        print("\n".join([f"NOT Running detections... version: {VERSION_TEXT}"] * 10))
 
     # Only initialize OpenAI when edges/captions are enabled
     openai_client = None
@@ -262,7 +267,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
 
         # Check if we should exit early only if the flag hasn't been set yet
         if not exit_early_flag and should_exit_early(cfg.exit_early_file):
-            print("Exit early signal detected. Skipping to the final frame...")
+            print(f"Exit early signal detected. Skipping to the final frame... version: {VERSION_TEXT}")
             exit_early_flag = True
 
         # If exit early flag is set and we're not at the last frame, skip this iteration
@@ -321,8 +326,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 mask=masks_np,
             )
             
-            # Make the edges
-            labels, edges, edge_image, captions = make_vlm_edges_and_captions(image, curr_det, obj_classes, detection_class_labels, det_exp_vis_path, color_path, cfg.make_edges, openai_client)
+            # Captions still come from the VLM; relations are derived from 3D geometry
+            # once, after the whole frame loop, from the final point cloud
+            # (build_final_object_graph, called after "LOOP OVER" below).
+            labels, captions = get_vlm_captions(image, curr_det, obj_classes, detection_class_labels, det_exp_vis_path, color_path, cfg.make_edges, openai_client)
 
             image_crops, image_feats, text_feats = compute_clip_features_batched(
                 image_rgb, curr_det, clip_model, clip_preprocess, clip_tokenizer, obj_classes.get_classes_arr(), cfg.device)
@@ -344,7 +351,6 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 "text_feats": text_feats,
                 "detection_class_labels": detection_class_labels,
                 "labels": labels,
-                "edges": edges,
                 "captions": captions,
             }
 
@@ -492,28 +498,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             if temp_class_name != most_common_class_name:
                 obj["class_name"] = most_common_class_name
 
-        map_edges = process_edges(match_indices, gobs, len(objects), objects, map_edges, frame_idx)
         is_final_frame = frame_idx == len(dataset) - 1
         if is_final_frame:
-            print("Final frame detected. Performing final post-processing...")
+            print(f"Final frame detected. Performing final post-processing... version: {VERSION_TEXT}")
 
-        # Clean up outlier edges
-        edges_to_delete = []
-        for curr_map_edge in map_edges.edges_by_index.values():
-            curr_obj1_idx = curr_map_edge.obj1_idx
-            curr_obj2_idx = curr_map_edge.obj2_idx
-            obj1_class_name = objects[curr_obj1_idx]['class_name'] 
-            obj2_class_name = objects[curr_obj2_idx]['class_name']
-            curr_first_detected = curr_map_edge.first_detected
-            curr_num_det = curr_map_edge.num_detections
-            if (frame_idx - curr_first_detected > cfg.edge_prune_window) and curr_num_det < 2:
-                edges_to_delete.append((curr_obj1_idx, curr_obj2_idx))
-            elif cfg.edge_max_gap_factor > 0 and not edge_is_geometrically_plausible(
-                objects[curr_obj1_idx], objects[curr_obj2_idx], cfg.edge_max_gap_factor
-            ):
-                edges_to_delete.append((curr_obj1_idx, curr_obj2_idx))
-        for edge in edges_to_delete:
-            map_edges.delete_edge(edge[0], edge[1])
         ### Perform post-processing periodically if told so
 
         # Denoising
@@ -644,7 +632,15 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 "is_final_frame": is_final_frame,
                 })
     # LOOP OVER -----------------------------------------------------
-    
+
+    # Build the whole scene's object graph once, from the final (fully
+    # merged/denoised) point clouds -- see build_final_object_graph() docstring.
+    up_axis, up_direction = None, None
+    if cfg.make_edges:
+        map_edges, up_axis, up_direction = build_final_object_graph(
+            objects, camera_positions, map_edges, frame_idx=len(dataset) - 1
+        )
+
     # Consolidate captions only when edges/captions are enabled
     if cfg.make_edges:
         for object in objects:
@@ -656,7 +652,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     # map (not the intermediate per-frame state), so every frame's overlay
     # reflects the same completed concept graph.
     if cfg.save_scenegraph_viz:
-        print("Rendering final scene graph visualizations...")
+        print(f"Rendering final scene graph visualizations... version: {VERSION_TEXT}")
         for frame_idx in trange(len(dataset)):
             color_path = Path(dataset.color_paths[frame_idx])
             color_tensor, *_ = dataset[frame_idx]
@@ -702,7 +698,9 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             cfg=cfg,
             objects=objects,
             obj_classes=obj_classes,
-            edges=map_edges
+            edges=map_edges,
+            up_axis=up_axis,
+            up_direction=up_direction,
         )
 
     if cfg.save_json:
@@ -729,7 +727,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 exp_out_path / "scenegraph_full.png",
                 title=f"{cfg.scene_id} / {cfg.exp_suffix}",
             )
-            print(f"Saved full scene graph to {full_scenegraph_path}")
+            print(f"Saved full scene graph to {full_scenegraph_path} version: {VERSION_TEXT}")
 
     # Save metadata if all frames are saved
     if cfg.save_objects_all_frames:

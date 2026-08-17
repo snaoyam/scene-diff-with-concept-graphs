@@ -81,7 +81,11 @@ def load_objects(concept_graphs_dir: Path, variant: str, exp_suffix: str):
     with gzip.open(pcd_path, "rb") as f:
         data = pickle.load(f)
     objects = [obj for obj in data["objects"] if not obj.get("is_background", False)]
-    return objects
+    # up_axis/up_direction are the main pipeline's camera-grounded detect_up_vector()
+    # result (slam/utils.py), persisted by save_pointcloud() -- .get() so pcd files
+    # saved before this was added still load fine (up_axis=None triggers a fallback
+    # in save_moved_objects_pointcloud_debug_image()).
+    return objects, data.get("up_axis"), data.get("up_direction")
 
 
 def bbox_center(obj):
@@ -197,20 +201,27 @@ def build_object_masks(before_objs, after_objs, matches, unmatched_before, unmat
     return object_masks, hw
 
 
-def save_moved_objects_pointcloud_debug_image(pair_name, before_objs, after_objs, moved_pairs, out_path: Path):
+def save_moved_objects_pointcloud_debug_image(pair_name, before_objs, after_objs, moved_pairs, out_path: Path,
+                                               up_axis=None, up_direction=None):
     """2D 투영 디버그 이미지: 전체 3D 점군을 회색 배경으로 깔고, moved_pairs로 판정된
-    물체들의 이동 전(주황)/이동 후(파랑) 점과 중심 간 화살표를 표시한다. up-axis는
-    코드베이스 어디에도 문서화돼 있지 않으므로, 전체 점의 bbox extent가 가장 작은 축을
-    up으로 간주해 매 실행마다 자동 추정하고 제목에 명시한다."""
+    물체들의 이동 전(주황)/이동 후(파랑) 점과 중심 간 화살표를 표시한다.
+
+    up_axis/up_direction은 메인 파이프라인의 detect_up_vector()(slam/utils.py, 카메라
+    위치 기반) 결과를 pcd 파일에서 그대로 읽어온 것 -- 이 투영 평면(up-axis와 직교하는
+    나머지 두 축)을 정하는 데 쓴다. up-axis 자체는 이 평면과 수직이라 실제 좌표 공간
+    안에는 화살표를 그릴 수 없으므로, 방향은 좌표와 무관한 구석의 나침반 아이콘+텍스트로
+    별도 표시한다. 예전 pcd 파일처럼 up_axis가 없으면(None) 점군 bbox extent가 가장
+    작은 축으로 폴백(이 경우 방향은 알 수 없음)."""
     if not moved_pairs:
         print(f"[{pair_name}] no moved objects -- skipping pointcloud debug image")
         return
 
-    all_points = np.concatenate(
-        [o["pcd_np"] for o in before_objs + after_objs if o["pcd_np"].size > 0], axis=0
-    )
-    extent = all_points.max(axis=0) - all_points.min(axis=0)
-    up_axis = int(np.argmin(extent))
+    if up_axis is None:
+        all_points = np.concatenate(
+            [o["pcd_np"] for o in before_objs + after_objs if o["pcd_np"].size > 0], axis=0
+        )
+        extent = all_points.max(axis=0) - all_points.min(axis=0)
+        up_axis = int(np.argmin(extent))
     plane_axes = [i for i in range(3) if i != up_axis]
 
     moved_before_idx = {bi for bi, _, _ in moved_pairs}
@@ -242,8 +253,23 @@ def save_moved_objects_pointcloud_debug_image(pair_name, before_objs, after_objs
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel(AXIS_NAMES[plane_axes[0]])
     ax.set_ylabel(AXIS_NAMES[plane_axes[1]])
-    ax.set_title(f"{pair_name} -- moved objects (up-axis auto-detected: {AXIS_NAMES[up_axis]})")
     ax.legend(loc="upper right", fontsize=8)
+
+    # up-axis is perpendicular to this top-down plane, so its direction can't be
+    # drawn as a real arrow in data space -- show a small fixed-direction compass
+    # icon (axes-fraction coords, unrelated to the actual point coordinates) in the
+    # opposite corner from the legend instead, naming the real 3D axis + sign.
+    if up_direction is not None:
+        axis_label = f"{'+' if up_direction > 0 else '-'}{AXIS_NAMES[up_axis]}"
+        ax.annotate("", xy=(0.06, 0.95), xytext=(0.06, 0.87), xycoords="axes fraction",
+                    arrowprops=dict(arrowstyle="->", color="black", lw=2))
+        ax.text(0.06, 0.965, f"UP ({axis_label})", transform=ax.transAxes,
+                ha="center", fontsize=9, fontweight="bold")
+        ax.set_title(f"{pair_name} -- moved objects (up-axis: {axis_label})")
+    else:
+        ax.text(0.06, 0.95, f"up-axis: {AXIS_NAMES[up_axis]}\n(direction unknown)", transform=ax.transAxes,
+                ha="center", fontsize=8, style="italic")
+        ax.set_title(f"{pair_name} -- moved objects (up-axis auto-detected: {AXIS_NAMES[up_axis]}, direction unknown)")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
@@ -254,8 +280,13 @@ def save_moved_objects_pointcloud_debug_image(pair_name, before_objs, after_objs
 
 def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, exp_suffix: str,
             max_match_distance: float, moved_threshold: float, visual_weight: float):
-    before_objs = load_objects(concept_graphs_dir, "before", exp_suffix)
-    after_objs = load_objects(concept_graphs_dir, "after", exp_suffix)
+    before_objs, before_up_axis, before_up_direction = load_objects(concept_graphs_dir, "before", exp_suffix)
+    after_objs, after_up_axis, after_up_direction = load_objects(concept_graphs_dir, "after", exp_suffix)
+    # before/after share one Pi3-estimated coordinate frame, so these should agree --
+    # prefer "before"'s, falling back to "after"'s for pcd files saved before either
+    # variant persisted this (see save_pointcloud()'s up_axis/up_direction params).
+    up_axis = before_up_axis if before_up_axis is not None else after_up_axis
+    up_direction = before_up_direction if before_up_axis is not None else after_up_direction
 
     matches, unmatched_before, unmatched_after = match_objects(
         before_objs, after_objs, max_match_distance, visual_weight
@@ -299,6 +330,7 @@ def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, 
     save_moved_objects_pointcloud_debug_image(
         pair_name, before_objs, after_objs, moved_pairs,
         benchmark_data_dir / "moved_objects_pointcloud.png",
+        up_axis=up_axis, up_direction=up_direction,
     )
 
 

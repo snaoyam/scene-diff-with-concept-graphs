@@ -112,38 +112,48 @@ class MapObjectList(DetectionList):
 
 # not sure if I will use this
 class MapEdge():
-    def __init__(self, obj1_idx, obj2_idx, rel_type, num_detections=1, first_detected=None):
+    def __init__(self, obj1_idx, obj2_idx, rel_type, num_detections=1, first_detected=None,
+                 center_distance=None, center_diff=None, surface_min_distance=None,
+                 surface_diff=None, iou=None, giou=None, iom=None):
         self.obj1_idx = obj1_idx
         self.obj2_idx = obj2_idx
         self.rel_type = rel_type
         self.num_detections = num_detections
         self.first_detected = first_detected # frame index that the object was first detected
+        # Geometry metrics computed by build_final_object_graph (slam/utils.py).
+        self.center_distance = center_distance
+        self.center_diff = center_diff
+        self.surface_min_distance = surface_min_distance
+        self.surface_diff = surface_diff
+        self.iou = iou
+        self.giou = giou
+        self.iom = iom
 
     def __str__(self):
         return f"({self.obj1_idx}, {self.rel_type}, {self.obj2_idx}), num_det: {self.num_detections}"
-    
+
     def __repr__(self):
         return str(self)
-    
+
 class MapEdgeMapping:
     def __init__(self, objects):
         self.objects = objects  # Reference to the list of existing objects
         self.edges_by_index = {}  # {(obj1_index, obj2_index): MapEdge}
         self.edges_by_uuid = {}  # {(obj1_uuid, obj2_uuid): MapEdge}
 
-    def add_or_update_edge(self, obj1_index, obj2_index, rel_type, first_detected=None):
+    def add_or_update_edge(self, obj1_index, obj2_index, rel_type, first_detected=None, **metrics):
         obj1_uuid, obj2_uuid = self.objects[obj1_index]['id'], self.objects[obj2_index]['id']
         uuid_key = (obj1_uuid, obj2_uuid)
-        
+
         if obj1_index == obj2_index:
             print(f"LOOOPY EDGE DETECTED: {obj1_index} == {obj2_index}")
             pass
-        
+
         if (obj1_index, obj2_index) in self.edges_by_index:
             edge = self.edges_by_index[(obj1_index, obj2_index)]
             edge.num_detections += 1
         else:
-            edge = MapEdge(obj1_index, obj2_index, rel_type, first_detected=first_detected)
+            edge = MapEdge(obj1_index, obj2_index, rel_type, first_detected=first_detected, **metrics)
             self.edges_by_index[(obj1_index, obj2_index)] = edge
             self.edges_by_uuid[uuid_key] = edge
             
@@ -252,7 +262,14 @@ class MapEdgeMapping:
                 'obj1_index': obj1_index,
                 'obj2_index': obj2_index,
                 'rel_type': edge.rel_type,
-                'num_detections': edge.num_detections
+                'num_detections': edge.num_detections,
+                'center_distance': edge.center_distance,
+                'center_diff': edge.center_diff,
+                'surface_min_distance': edge.surface_min_distance,
+                'surface_diff': edge.surface_diff,
+                'iou': edge.iou,
+                'giou': edge.giou,
+                'iom': edge.iom,
             })
         
         # Serialize the object list using its existing method
