@@ -11,7 +11,7 @@
 #   ./construct-concept-graphs.sh <pair_name>
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONCEPT_GRAPHS_DIR="$(cd "$SCRIPT_DIR/../concept-graphs" && pwd)"
+CONCEPT_GRAPHS_DIR="$(cd "${CONCEPT_GRAPHS_ROOT:-$SCRIPT_DIR/../concept-graphs}" && pwd)"
 
 construct_concept_graphs() {
     local pair_name="$1"

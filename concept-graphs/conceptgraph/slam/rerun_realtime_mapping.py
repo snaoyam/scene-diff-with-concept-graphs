@@ -94,6 +94,7 @@ torch.set_grad_enabled(False)
 @hydra.main(version_base=None, config_path="../hydra_configs/", config_name="rerun_realtime_mapping")
 # @profile
 def main(cfg : DictConfig):
+    print("===== version original concept graph =====")
     # OmegaConf.set_struct(cfg, False)
     # cfg.image_height = 512
     # cfg.image_width = 512

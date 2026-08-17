@@ -5,6 +5,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/outputs"
 timestamp="$(date '+%Y-%m-%d_%H-%M-%S')"
 
+# ./scripts/setup.sh가 만들어둔 격리 스냅샷+venv가 있으면 자동으로 사용 (수동 activate/env var 불필요).
+# 다른 터미널에서 setup.sh를 한 번만 실행해도, 이후 어느 터미널에서 run.sh를 실행하든 적용된다.
+ISOLATED_RUN_DIR="$SCRIPT_DIR/../.isolated-runs"
+if [[ -d "$ISOLATED_RUN_DIR/venv" ]]; then
+    ISOLATED_RUN_DIR="$(cd "$ISOLATED_RUN_DIR" && pwd)"
+    echo "isolated code snapshot detected at $ISOLATED_RUN_DIR -- using it (run ./scripts/setup.sh to refresh)"
+    export PATH="$ISOLATED_RUN_DIR/venv/bin:$PATH"
+    export CONCEPT_GRAPHS_ROOT="${CONCEPT_GRAPHS_ROOT:-$ISOLATED_RUN_DIR/concept-graphs}"
+    export SCENE_DIFF_ROOT="${SCENE_DIFF_ROOT:-$ISOLATED_RUN_DIR/scene_diff}"
+fi
+
 source "$SCRIPT_DIR/scene-pairs.sh"
 source "$SCRIPT_DIR/construct-concept-graphs.sh"
 source "$SCRIPT_DIR/convert-concept-graphs-to-scene-diff-benchmark-data.sh"
@@ -66,6 +77,8 @@ for scene_id in "${SCENE_PAIRS[@]}"; do
             continue
         fi
     } > "$scene_output_dir/terminal-outputs-$timestamp.txt" 2>&1
+
+    echo "[$scene_id] complete"
 done
 
 echo

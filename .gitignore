@@ -25,3 +25,4 @@
 /terminal-output/*
 /outputs*/
 /hydra-logs/
+/.isolated-runs/

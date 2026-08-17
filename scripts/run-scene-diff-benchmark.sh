@@ -8,7 +8,7 @@
 #   ./run-scene-diff-benchmark.sh <pair_name>
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONCEPT_GRAPHS_SLAM_DIR="$(cd "$SCRIPT_DIR/../concept-graphs/conceptgraph/slam" && pwd)"
+CONCEPT_GRAPHS_SLAM_DIR="$(cd "${CONCEPT_GRAPHS_ROOT:-$SCRIPT_DIR/../concept-graphs}/conceptgraph/slam" && pwd)"
 
 run_scene_diff_benchmark() {
     local pair_name="$1"

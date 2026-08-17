@@ -20,6 +20,7 @@ debug_masks/{before,after,moved}/ mask-overlay images (green=added, red=removed,
 blue=moved, each mask labeled with its object id) -- see _save_debug_visualizations().
 """
 import argparse
+import os
 import pickle
 import shutil
 import sys
@@ -31,7 +32,9 @@ import hydra
 import numpy as np
 from pycocotools import mask as mask_utils
 
-SCENE_DIFF_DIR = Path("/node_data/urp26su_dongwoo/concept-graphs-project/scene_diff")
+SCENE_DIFF_DIR = Path(os.environ.get(
+    "SCENE_DIFF_ROOT", "/node_data/urp26su_dongwoo/concept-graphs-project/scene_diff"
+))
 
 sys.path.insert(0, str(SCENE_DIFF_DIR / "scripts"))
 import evaluate_multiview  # noqa: E402
