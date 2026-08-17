@@ -30,7 +30,7 @@ from collections import Counter
 from conceptgraph.utils.optional_wandb_wrapper import OptionalWandB
 from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker
 from conceptgraph.utils.vlm import consolidate_captions, get_openai_client
-from conceptgraph.utils.ious import mask_subtract_contained
+from conceptgraph.utils.ious import mask_subtract_contained, compute_2d_max_overlap_batch, group_same_object_detections
 from conceptgraph.utils.general_utils import (
     ObjectClasses,
     get_det_out_path,
@@ -328,7 +328,45 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 class_id=detection_class_ids,
                 mask=masks_np,
             )
-            
+
+            # Merge detections that likely show the same physical object under
+            # different class labels (e.g. an open-vocab detector proposing both
+            # "cup" and "mug" for one object) instead of relying on class-label
+            # identity -- YOLO's own NMS (agnostic_nms=False) only dedupes within
+            # the same class. CLIP is primary (semantic identity); DINOv3 is
+            # secondary/auxiliary (shape-sensitive, so differently-shaped objects
+            # that just look visually similar don't get merged). Cheap spatial
+            # overlap is checked first so the extra CLIP/DINO pass is skipped on
+            # the common case where nothing overlaps at all.
+            if len(curr_det.xyxy) > 1:
+                overlap = compute_2d_max_overlap_batch(curr_det.xyxy)
+                if (overlap >= cfg.dedup_overlap_thresh).any():
+                    dedup_crops, dedup_clip_feats, _ = compute_clip_features_batched(
+                        image_rgb, curr_det, clip_model, clip_preprocess, clip_tokenizer, obj_classes.get_classes_arr(), cfg.device)
+                    dedup_dino_feats = compute_dinov3_features_batched(dedup_crops, dinov3_model, cfg.device)
+                    groups = group_same_object_detections(
+                        overlap, dedup_clip_feats, dedup_dino_feats,
+                        cfg.dedup_overlap_thresh, cfg.dedup_clip_sim_thresh, cfg.dedup_dino_sim_thresh)
+
+                    if any(len(g) > 1 for g in groups):
+                        merged_xyxy, merged_confidence, merged_class_id, merged_mask, merged_labels = [], [], [], [], []
+                        for group in groups:
+                            rep = group[int(np.argmax(curr_det.confidence[group]))]
+                            boxes = curr_det.xyxy[group]
+                            merged_xyxy.append([boxes[:, 0].min(), boxes[:, 1].min(), boxes[:, 2].max(), boxes[:, 3].max()])
+                            merged_mask.append(np.logical_or.reduce(curr_det.mask[group]))
+                            merged_confidence.append(curr_det.confidence[rep])
+                            merged_class_id.append(curr_det.class_id[rep])
+                            merged_labels.append(detection_class_labels[rep])
+
+                        curr_det = sv.Detections(
+                            xyxy=np.array(merged_xyxy, dtype=np.float32),
+                            confidence=np.array(merged_confidence, dtype=np.float32),
+                            class_id=np.array(merged_class_id),
+                            mask=np.array(merged_mask),
+                        )
+                        detection_class_labels = merged_labels
+
             # Captions still come from the VLM; relations are derived from 3D geometry
             # once, after the whole frame loop, from the final point cloud
             # (build_final_object_graph, called after "LOOP OVER" below).

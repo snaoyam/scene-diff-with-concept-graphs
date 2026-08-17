@@ -450,6 +450,63 @@ def compute_2d_box_contained_batch(bbox: torch.Tensor, thresh:float=0.95) -> tor
 
     return count
 
+def compute_2d_max_overlap_batch(xyxy: np.ndarray) -> np.ndarray:
+    '''
+    For each pair of 2D boxes (x1,y1,x2,y2), max(intersection/area_i, intersection/area_j)
+    -- robust to very differently-sized boxes (e.g. a small occlusion fragment fully
+    inside a much larger one still scores high, unlike plain IoU). Diagonal is zeroed.
+
+    xyxy: (N, 4). Returns (N, N).
+    '''
+    areas = (xyxy[:, 2] - xyxy[:, 0]) * (xyxy[:, 3] - xyxy[:, 1])
+    lt = np.maximum(xyxy[:, None, :2], xyxy[None, :, :2])
+    rb = np.minimum(xyxy[:, None, 2:], xyxy[None, :, 2:])
+    inter = (rb - lt).clip(min=0)
+    inter_areas = inter[:, :, 0] * inter[:, :, 1]
+    overlap = np.maximum(inter_areas / areas[:, None], inter_areas / areas[None, :])
+    np.fill_diagonal(overlap, 0)
+    return overlap
+
+
+def group_same_object_detections(overlap, clip_feats, dino_feats, overlap_thresh, clip_sim_thresh, dino_sim_thresh):
+    '''
+    Groups detections that likely show the same physical object under different
+    class labels (e.g. an open-vocab detector proposing both "cup" and "mug" for
+    one object) or split into fragments by occlusion, instead of relying on class-
+    label identity. Union-find over pairs where overlap[i,j] >= overlap_thresh AND
+    clip_sim[i,j] >= clip_sim_thresh AND dino_sim[i,j] >= dino_sim_thresh, so 3+
+    mutually-linked detections merge transitively into one group. CLIP (semantic
+    identity) is the primary signal; DINOv3 (shape-sensitive) is secondary, so two
+    visually-similar but differently-shaped objects (e.g. two different cups) don't
+    get merged just because CLIP thinks they match.
+
+    clip_feats, dino_feats: (N, D), expected L2-normalized.
+    Returns: list of index-groups, covering every detection exactly once.
+    '''
+    n = overlap.shape[0]
+    clip_sim = clip_feats @ clip_feats.T
+    dino_sim = dino_feats @ dino_feats.T
+
+    parent = list(range(n))
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if overlap[i, j] >= overlap_thresh and clip_sim[i, j] >= clip_sim_thresh and dino_sim[i, j] >= dino_sim_thresh:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+    groups_by_root = {}
+    for i in range(n):
+        groups_by_root.setdefault(find(i), []).append(i)
+    return list(groups_by_root.values())
+
+
 def mask_subtract_contained(xyxy: np.ndarray, mask: np.ndarray, th1=0.8, th2=0.7):
     '''
     Compute the containing relationship between all pair of bounding boxes.

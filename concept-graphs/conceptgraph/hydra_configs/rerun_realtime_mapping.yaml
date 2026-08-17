@@ -65,6 +65,16 @@ mask_area_threshold: 25 # mask with pixel area less than this will be skipped
 mask_conf_threshold: 0.25 # mask with lower confidence score will be skipped
 max_bbox_area_ratio: null # boxes with larger areas than this will be skipped
 
+# Merge same-physical-object detections that got different class labels
+# (e.g. YOLO-World proposing both "cup" and "mug" for one object) instead of
+# relying on class-label identity. CLIP is primary (semantic match); DINOv3
+# is secondary/auxiliary (shape-sensitive, so differently-shaped objects that
+# just look visually similar in color/texture -- e.g. two different cups --
+# aren't merged just because CLIP thinks they match).
+dedup_overlap_thresh: 0.3
+dedup_clip_sim_thresh: 0.9
+dedup_dino_sim_thresh: 0.7
+
 min_points_threshold: 16 # projected and sampled pcd with less points will be skipped
 
 # For merge_overlap_objects() function
