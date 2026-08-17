@@ -41,6 +41,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from omegaconf import OmegaConf
 from pycocotools import mask as mask_utils
 from scipy.optimize import linear_sum_assignment
 
@@ -57,6 +58,22 @@ def _load_rerun_mapping_config() -> dict:
     with hydra.initialize(version_base=None, config_path="../hydra_configs"):
         cfg = hydra.compose(config_name="rerun_realtime_mapping")
     return {"output_root": Path(cfg.output_root).resolve(), "exp_suffix": cfg.exp_suffix}
+
+
+def load_scene_hw(pair_name: str):
+    """Reads (H, W) straight from the scene's dataset config
+    (conceptgraph/dataset/dataconfigs/scenediff/<pair_name>/<variant>.yaml,
+    camera_params.image_height/image_width) instead of from any detected object's mask --
+    the same source rerun_realtime_mapping.py itself falls back to when
+    cfg.image_height/image_width are unset (see process_cfg() in slam/utils.py). Unlike
+    infer_hw(), this works even when before_objs/after_objs are both completely empty."""
+    dataconfigs_dir = Path(__file__).resolve().parent.parent / "dataset" / "dataconfigs" / "scenediff" / pair_name
+    for variant in ("before", "after"):
+        path = dataconfigs_dir / f"{variant}.yaml"
+        if path.exists():
+            camera_params = OmegaConf.load(path).camera_params
+            return int(camera_params.image_height), int(camera_params.image_width)
+    return None
 
 
 def load_objects(concept_graphs_dir: Path, variant: str, exp_suffix: str):
@@ -127,6 +144,18 @@ def encode_masks(obj):
         rle["counts"] = rle["counts"].decode("ascii")
         per_frame[int(frame_idx)] = {"mask": rle, "cost": 1.0}
     return per_frame, hw
+
+
+def infer_hw(before_objs, after_objs):
+    """Fallback (H, W) source for when nothing was exported into object_masks (e.g. every
+    matched pair was under moved_threshold, so build_object_masks() never called
+    encode_masks() and its hw stayed None) -- read it directly off any object's mask
+    instead, since before_objs/after_objs are non-empty and still have real masks even
+    though none of them counted as a "change"."""
+    for obj in before_objs + after_objs:
+        for mask in obj.get("mask", []):
+            return np.asarray(mask).shape
+    return None
 
 
 def build_object_masks(before_objs, after_objs, matches, unmatched_before, unmatched_after, moved_threshold: float):
@@ -234,6 +263,18 @@ def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, 
     object_masks, hw = build_object_masks(
         before_objs, after_objs, matches, unmatched_before, unmatched_after, moved_threshold
     )
+    if hw is None:
+        # No moved/removed/added objects, but before_objs/after_objs may still be
+        # non-empty (e.g. everything matched and stayed put) -- get (H, W) straight from
+        # any object's mask so we can still write a valid (empty) object_masks.pkl
+        # instead of aborting the whole scene pair.
+        hw = infer_hw(before_objs, after_objs)
+    if hw is None:
+        # before_objs/after_objs are both completely empty (no non-background object
+        # survived mapping in either variant) -- infer_hw() has no mask to read either.
+        # Fall back to the scene's own dataset config so the pair still produces a valid
+        # (fully empty) object_masks.pkl instead of aborting.
+        hw = load_scene_hw(pair_name)
 
     if hw is None:
         raise RuntimeError(

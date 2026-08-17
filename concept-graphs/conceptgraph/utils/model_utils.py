@@ -34,6 +34,12 @@ def compute_clip_features_batched(image, detections, clip_model, clip_preprocess
         text_tokens.append(classes[class_id])
         image_crops.append(cropped_image)
 
+    if not preprocessed_images:
+        # No detections in this frame -- torch.cat() below has nothing to concatenate.
+        # image_feats is never indexed by callers when there are 0 detections for the
+        # frame (they loop over range(len(gobs['mask']))), so shape doesn't matter here.
+        return image_crops, np.empty((0, 0), dtype=np.float32), []
+
     # Convert lists to batches
     # dtype=torch.float16 matches clip_model's precision="fp16" (open_clip's manual
     # mixed-precision mode) -- encode_image() doesn't cast its input itself.

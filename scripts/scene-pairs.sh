@@ -3,14 +3,16 @@ JSON_FILE="/node_data/urp26su_dongwoo/concept-graphs-project/scene_diff/data/sce
 SCENE_PAIRS=($(python -c "import json; d=json.load(open('$JSON_FILE')); print('\n'.join(d.get('varied', []) + d.get('kitchen', [])))" | sort))
 
 # SCENE_PAIRS=(
-#   living_room_17_living_room_18
+#   street_3_street_4
+#   # kitchen_8_kitchen_9
+#   # store_33_store_34
 # )
 
 # SCENE_PAIRS=("${SCENE_PAIRS[@]:0}")
 
 SUB_SCENE_PAIRS=()
-for offset in 0 1 2 3; do
-    for (( i=offset; i<${#SCENE_PAIRS[@]}; i+=4 )); do
+for offset in 0 1 2; do
+    for (( i=offset; i<${#SCENE_PAIRS[@]}; i+=3 )); do
         SUB_SCENE_PAIRS+=("${SCENE_PAIRS[i]}")
     done
 done

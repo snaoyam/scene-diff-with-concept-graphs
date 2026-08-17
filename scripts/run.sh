@@ -61,19 +61,22 @@ for scene_id in "${SCENE_PAIRS[@]}"; do
         # 3. run-scene-diff-benchmark.sh
         echo "=== [$scene_id] 1/3 construct-concept-graphs ==="
         if ! construct_concept_graphs "$scene_id"; then
-            failed_scenes+=("$scene_id (construct)")
+            echo "[$scene_id] failed"
+            failed_scenes+=("$scene_id")
             continue
         fi
 
         echo "=== [$scene_id] 2/3 convert-concept-graphs-to-scene-diff-benchmark-data ==="
         if ! convert_concept_graphs_to_scene_diff_benchmark_data "$scene_id"; then
-            failed_scenes+=("$scene_id (convert)")
+            echo "[$scene_id] failed"
+            failed_scenes+=("$scene_id")
             continue
         fi
 
         echo "=== [$scene_id] 3/3 run-scene-diff-benchmark ==="
         if ! run_scene_diff_benchmark "$scene_id"; then
-            failed_scenes+=("$scene_id (benchmark)")
+            echo "[$scene_id] failed"
+            failed_scenes+=("$scene_id")
             continue
         fi
     } > "$scene_output_dir/terminal-outputs-$timestamp.txt" 2>&1

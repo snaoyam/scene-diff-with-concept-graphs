@@ -622,8 +622,6 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 cfg=cfg,
                 objects=objects,
                 obj_classes=obj_classes,
-                latest_pcd_filepath=cfg.latest_pcd_filepath,
-                create_symlink=True
             )
 
         owandb.log({
@@ -704,8 +702,6 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             cfg=cfg,
             objects=objects,
             obj_classes=obj_classes,
-            latest_pcd_filepath=cfg.latest_pcd_filepath,
-            create_symlink=True,
             edges=map_edges
         )
 

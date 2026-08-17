@@ -79,8 +79,6 @@ save_suffix: exp_streamlined_mapping_base_suffix
 
 class_agnostic: !!bool False   # If set, the color will be set by instance, rather than most common class
 
-latest_pcd_filepath: ${repo_root}/latest_pcd_save
-
 # SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
 # ScanNet-style RGB-D sequences by conceptgraph/dataset/scenediff_to_conceptgraph.py.
 # Each SceneDiff pair produces two ConceptGraph scenes sharing one Pi3-estimated

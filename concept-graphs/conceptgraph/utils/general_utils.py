@@ -332,6 +332,17 @@ def filter_detections(
             filtered_detections.append(current_det)
 
     # Unzip the filtered results
+    if not filtered_detections:
+        # Every detection got filtered out (small mask / IoU dup / bg class) -- zip(*[])
+        # has nothing to unpack, so build the empty result directly. mask is shaped
+        # (0, H, W), not None, since downstream code (e.g. mask_subtract_contained) calls
+        # .copy() on detections.mask unconditionally.
+        return sv.Detections(
+            class_id=np.array([], dtype=np.int64),
+            confidence=np.array([], dtype=np.float32),
+            xyxy=np.zeros((0, 4), dtype=np.float32),
+            mask=np.zeros((0, *image.shape[:2]), dtype=np.bool_),
+        ), []
     confidences, class_ids, xyxy, masks, indices = zip(*filtered_detections)
     filtered_labels = [given_labels[i] for i in indices]
 
@@ -659,17 +670,15 @@ def save_edge_json(exp_suffix, exp_out_path, objects, edges):
     print(f"Saved edge JSON to {json_edge_out_path}")
 
 
-def save_pointcloud(exp_suffix, exp_out_path, cfg, objects, obj_classes, latest_pcd_filepath=None, create_symlink=True, edges = None):
+def save_pointcloud(exp_suffix, exp_out_path, cfg, objects, obj_classes, edges = None):
     """
-    Saves the point cloud data to a .pkl.gz file. Optionally, creates or updates a symlink to the latest saved file.
+    Saves the point cloud data to a .pkl.gz file.
 
     Args:
     - exp_suffix (str): Suffix for the experiment, used in naming the saved file.
     - exp_out_path (Path or str): Output path for the experiment's saved files.
     - objects: The objects to save, assumed to have a `to_serializable()` method.
     - obj_classes: The object classes, assumed to have `get_classes_arr()` and `get_class_color_dict_by_index()` methods.
-    - latest_pcd_filepath (Path or str, optional): Path for the symlink to the latest point cloud save. Default is None.
-    - create_symlink (bool): Whether to create/update a symlink to the latest save. Default is True.
     """
     print("saving map...")
     # Prepare the results dictionary
@@ -693,17 +702,7 @@ def save_pointcloud(exp_suffix, exp_out_path, cfg, objects, obj_classes, latest_
     if edges is not None:
         print(f"Also saved edges to {pcd_save_path}")
 
-    # Create or update the symlink if requested
-    if create_symlink and latest_pcd_filepath:
-        latest_pcd_path = Path(latest_pcd_filepath)
-        # Remove the existing symlink if it exists
-        if latest_pcd_path.is_symlink() or latest_pcd_path.exists():
-            latest_pcd_path.unlink()
-        # Create a new symlink pointing to the latest point cloud save
-        latest_pcd_path.symlink_to(pcd_save_path)
-        print(f"Updated symlink to point to the latest point cloud save at {latest_pcd_path} to:\n{pcd_save_path}")
 
-        
 def save_objects_for_frame(obj_all_frames_out_path, frame_idx, objects, obj_min_detections, adjusted_pose, color_path):
     save_path = obj_all_frames_out_path / f"{frame_idx:06d}.pkl.gz"
     filtered_objects = [obj for obj in objects if obj['num_detections'] >= obj_min_detections]
