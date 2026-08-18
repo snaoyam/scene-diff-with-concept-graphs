@@ -30,6 +30,8 @@ from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker
 from conceptgraph.utils.vlm import consolidate_captions, get_openai_client
 from conceptgraph.utils.ious import mask_subtract_contained, compute_2d_max_overlap_batch, group_same_object_detections
 from conceptgraph.utils.general_utils import (
+    DETECTIONS_EXP_SUFFIX,
+    EXP_SUFFIX,
     ObjectClasses,
     discover_scene_vocabulary,
     get_det_out_path,
@@ -101,6 +103,9 @@ def main(cfg : DictConfig):
     # closed image" from imageio/Pillow double-closing PNG file handles). Keep
     # PIL quiet without touching the global verbose setting.
     logging.getLogger("PIL").setLevel(logging.INFO)
+
+    cfg.exp_suffix = EXP_SUFFIX
+    cfg.detections_exp_suffix = DETECTIONS_EXP_SUFFIX
 
     # Build the two ConceptGraphs (before/after) for this SceneDiff pair in one
     # run. Each variant gets its own deep copy of cfg so nothing one variant
@@ -182,8 +187,8 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     discovered_classes_path = get_discovered_classes_path(det_exp_path)
     # get_openai_client() just constructs a client object, no network I/O, so it's
     # safe to build unconditionally -- scene vocabulary discovery needs it whenever
-    # run_detections is True, regardless of cfg.make_edges (which only gates the
-    # later caption/relation VLM usage).
+    # run_detections is True, regardless of cfg.make_captions (which only gates the
+    # later per-object caption VLM usage).
     openai_client = get_openai_client()
 
     # if we need to do detections
@@ -413,10 +418,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                         )
                         detection_class_labels = merged_labels
 
-            # Captions still come from the VLM; relations are derived from 3D geometry
-            # once, after the whole frame loop, from the final point cloud
-            # (build_final_object_graph, called after "LOOP OVER" below).
-            labels, captions = get_vlm_captions(image, curr_det, obj_classes, detection_class_labels, det_exp_vis_path, color_path, cfg.make_edges, openai_client)
+            # Captions still come from the VLM, gated by cfg.make_captions; relations
+            # are derived from 3D geometry once, after the whole frame loop, from the
+            # final point cloud (build_final_object_graph, called after "LOOP OVER" below).
+            labels, captions = get_vlm_captions(image, curr_det, obj_classes, detection_class_labels, det_exp_vis_path, color_path, cfg.make_captions, openai_client)
 
             image_crops, image_feats, text_feats = compute_clip_features_batched(
                 image_rgb, curr_det, clip_model, clip_preprocess, clip_tokenizer, obj_classes.get_classes_arr(), cfg.device)
@@ -712,8 +717,8 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             objects, camera_positions, map_edges, frame_idx=len(dataset) - 1
         )
 
-    # Consolidate captions only when edges/captions are enabled
-    if cfg.make_edges:
+    # Consolidate captions only when captions are enabled
+    if cfg.make_captions:
         for object in objects:
             obj_captions = object['captions'][:20]
             consolidated_caption = consolidate_captions(openai_client, obj_captions)
@@ -762,43 +767,41 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             )
 
     # Save the pointcloud
-    if cfg.save_pcd:
-        save_pointcloud(
-            exp_suffix=cfg.exp_suffix,
-            exp_out_path=exp_out_path,
-            cfg=cfg,
-            objects=objects,
-            obj_classes=obj_classes,
-            edges=map_edges,
-            up_axis=up_axis,
-            up_direction=up_direction,
-        )
+    save_pointcloud(
+        exp_suffix=cfg.exp_suffix,
+        exp_out_path=exp_out_path,
+        cfg=cfg,
+        objects=objects,
+        obj_classes=obj_classes,
+        edges=map_edges,
+        up_axis=up_axis,
+        up_direction=up_direction,
+    )
 
-    if cfg.save_json:
-        save_obj_json(
-            exp_suffix=cfg.exp_suffix,
-            exp_out_path=exp_out_path,
-            objects=objects
-        )
-        
-        save_edge_json(
-            exp_suffix=cfg.exp_suffix,
-            exp_out_path=exp_out_path,
-            objects=objects,
-            edges=map_edges
-        )
+    save_obj_json(
+        exp_suffix=cfg.exp_suffix,
+        exp_out_path=exp_out_path,
+        objects=objects
+    )
 
-        if cfg.save_scenegraph_full:
-            full_scenegraph = load_scene_graph(
-                exp_out_path / f"obj_json_{cfg.exp_suffix}.json",
-                exp_out_path / f"edge_json_{cfg.exp_suffix}.json",
-            )
-            full_scenegraph_path = render_full_scenegraph(
-                full_scenegraph,
-                exp_out_path / "scenegraph_full.png",
-                title=f"{cfg.scene_id} / {cfg.exp_suffix}",
-            )
-            print(f"Saved full scene graph to {full_scenegraph_path} version: {VERSION_TEXT}")
+    save_edge_json(
+        exp_suffix=cfg.exp_suffix,
+        exp_out_path=exp_out_path,
+        objects=objects,
+        edges=map_edges
+    )
+
+    if cfg.save_scenegraph_full:
+        full_scenegraph = load_scene_graph(
+            exp_out_path / f"obj_json_{cfg.exp_suffix}.json",
+            exp_out_path / f"edge_json_{cfg.exp_suffix}.json",
+        )
+        full_scenegraph_path = render_full_scenegraph(
+            full_scenegraph,
+            exp_out_path / "scenegraph_full.png",
+            title=f"{cfg.scene_id} / {cfg.exp_suffix}",
+        )
+        print(f"Saved full scene graph to {full_scenegraph_path} version: {VERSION_TEXT}")
 
     # Save metadata if all frames are saved
     if cfg.save_objects_all_frames:

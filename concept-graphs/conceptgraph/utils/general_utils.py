@@ -30,6 +30,14 @@ import numpy as np
 import time
 from PIL import Image
 
+# Fixed labels for pipeline output folders, i.e.
+# <dataset_root>/<scene_id>/<exps_dir_name>/<EXP_SUFFIX|DETECTIONS_EXP_SUFFIX>/.
+# Pinned here (previously configurable via rerun_realtime_mapping.yaml) since both
+# rerun_realtime_mapping.py and convert_concept_graphs_to_scene_diff_benchmark_data.py
+# need the same value and the project only ever uses one value for each.
+EXP_SUFFIX = "r_mapping_pilot"  # helpful label to identify the mapping experiment
+DETECTIONS_EXP_SUFFIX = "s_detections_pilot"  # helpful label to identify the detections experiment
+
 def cfg_to_dict(input_cfg):
     """ Convert a Hydra configuration object to a native Python dictionary,
     ensuring all special types (e.g., ListConfig, DictConfig, PosixPath) are

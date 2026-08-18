@@ -37,6 +37,7 @@ import pickle
 from pathlib import Path
 
 import hydra
+from conceptgraph.utils.general_utils import EXP_SUFFIX
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -49,15 +50,16 @@ AXIS_NAMES = ["X", "Y", "Z"]
 
 
 def _load_rerun_mapping_config() -> dict:
-    """Reads output_root/exp_suffix from rerun_realtime_mapping.yaml -- the single
-    source of truth for where pipeline outputs live -- via hydra.compose(), the same
+    """Reads output_root from rerun_realtime_mapping.yaml -- the single source of
+    truth for where pipeline outputs live -- via hydra.compose(), the same
     hydra_configs/ this script's sibling rerun_realtime_mapping.py loads with
     @hydra.main(config_path="../hydra_configs/", config_name="rerun_realtime_mapping").
     hydra.initialize() resolves config_path relative to this file, so it's the same
-    "../hydra_configs" used there."""
+    "../hydra_configs" used there. exp_suffix itself is not read from the yaml --
+    it's pinned to general_utils.EXP_SUFFIX (see there for why)."""
     with hydra.initialize(version_base=None, config_path="../hydra_configs"):
         cfg = hydra.compose(config_name="rerun_realtime_mapping")
-    return {"output_root": Path(cfg.output_root).resolve(), "exp_suffix": cfg.exp_suffix}
+    return {"output_root": Path(cfg.output_root).resolve()}
 
 
 def load_scene_hw(pair_name: str):
@@ -352,7 +354,7 @@ def main():
         pair_name=args.pair_name,
         concept_graphs_dir=scene_root / "concept_graphs",
         benchmark_data_dir=scene_root / "benchmark_data",
-        exp_suffix=cfg["exp_suffix"],
+        exp_suffix=EXP_SUFFIX,
         max_match_distance=args.max_match_distance,
         moved_threshold=args.moved_threshold,
         visual_weight=args.visual_weight,

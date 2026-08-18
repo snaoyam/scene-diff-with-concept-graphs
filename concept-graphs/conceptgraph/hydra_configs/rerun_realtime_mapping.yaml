@@ -88,11 +88,6 @@ merge_overlap_thresh: 0.7      # -1 means do not perform the merge_overlap_objec
 merge_visual_sim_thresh: 0.7   # Merge only if the visual similarity is larger
 merge_text_sim_thresh: 0.7     # Merge only if the text cosine sim is larger
 
-# Output point cloud
-save_pcd: !!bool True
-save_json: !!bool True
-save_suffix: exp_streamlined_mapping_base_suffix
-
 # SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
 # ScanNet-style RGB-D sequences by conceptgraph/dataset/scenediff_to_conceptgraph.py.
 # Each SceneDiff pair produces two ConceptGraph scenes sharing one Pi3-estimated
@@ -148,7 +143,6 @@ skip_bg: !!bool False
 # <dataset_root>/<scene_id>/<exps_dir_name>/<exp_suffix|detections_exp_suffix>/
 exps_dir_name: exps
 
-detections_exp_suffix: s_detections_pilot # helpful label to identify your detections
 force_detection: !!bool False
 save_detections: !!bool True
 
@@ -159,8 +153,12 @@ make_edges: !!bool True
 # where n is auto-selected per scene as the smallest value that leaves no
 # object isolated -- no manual tuning knob needed here.
 
+# Per-object VLM captions, gathered every frame (get_vlm_captions) and consolidated
+# into one caption per object at the end (consolidate_captions). Independent of
+# make_edges -- edges no longer come from captions, they're derived from 3D geometry.
+make_captions: !!bool False
+
 stride: 1 # scenediff frames are already sparsely sampled during preprocessing
-exp_suffix: r_mapping_pilot # helpful label to identify your mapping experiment
 
 save_video: !!bool False
 save_objects_all_frames: !!bool False
