@@ -475,7 +475,7 @@ def discover_scene_vocabulary(
         # kwargs as top-level cfg overrides (check_dict_alignment) and doesn't forward
         # them to inference()/generate() -- so only the standard `conf` (box-score
         # filter) is configurable here; points density uses ultralytics' own default.
-        sam_out = sam_predictor.predict(str(color_path), verbose=False, conf=sam_conf)
+        sam_out = sam_predictor.predict(str(color_path), verbose=False, conf=sam_conf, quantize=16)
         has_masks = sam_out[0].masks is not None and len(sam_out[0].masks.data) > 0
         masks = sam_out[0].masks.data.cpu().numpy() if has_masks else np.empty((0, H, W), dtype=bool)
         boxes = sam_out[0].boxes.xyxy.cpu().numpy() if has_masks else np.empty((0, 4))

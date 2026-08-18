@@ -16,6 +16,7 @@ CONCEPT_GRAPHS_DIR="$(cd "${CONCEPT_GRAPHS_ROOT:-$SCRIPT_DIR/../concept-graphs}"
 construct_concept_graphs() {
     local pair_name="$1"
     (cd "$CONCEPT_GRAPHS_DIR" && \
+        PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" \
         python conceptgraph/slam/rerun_realtime_mapping.py "scene_pair=${pair_name}")
 }
 

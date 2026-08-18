@@ -113,6 +113,10 @@ def main(cfg : DictConfig):
         variant_cfg = copy.deepcopy(cfg)
         variant_cfg.scene_variant = variant
         shared_models = run_mapping_for_scene(variant_cfg, shared_models)
+        # Release cached-but-unused allocator blocks (e.g. from the "segment
+        # everything" vocabulary discovery pass) back to the driver before the
+        # next variant starts.
+        torch.cuda.empty_cache()
 
 
 def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
@@ -212,11 +216,14 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             clip_tokenizer = open_clip.get_tokenizer("ViT-H-14")
             # fp16 (.half()) was tried first to match CLIP's precision, but DINOv3
             # ViT-H+/16 produces all-NaN output under a blind .half() cast (attention
-            # softmax/LayerNorm overflow) -- confirmed by testing fp32 vs fp16 on real
-            # crops from this pipeline. fp32 is required for correct output.
+            # softmax/LayerNorm overflow, since fp16's exponent range tops out at
+            # ~65504) -- confirmed by testing fp32 vs fp16 on real crops from this
+            # pipeline. bfloat16 has the same exponent range as fp32 (just fewer
+            # mantissa bits), so it avoids that overflow while still halving memory
+            # vs fp32.
             dinov3_model = torch.hub.load(
                 cfg.dinov3_repo_dir, cfg.dinov3_model_name, source='local', weights=cfg.dinov3_checkpoint_path
-            ).to(cfg.device).eval()
+            ).to(cfg.device).to(torch.bfloat16).eval()
             shared_models = (detection_model, sam_predictor, clip_model, clip_preprocess, clip_tokenizer, dinov3_model)
         else:
             detection_model, sam_predictor, clip_model, clip_preprocess, clip_tokenizer, dinov3_model = shared_models
@@ -241,6 +248,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             sam_max_segments_per_frame=cfg.discovery_sam_max_segments_per_frame,
             device=cfg.device,
         )
+        # discover_scene_vocabulary's SAM "segment everything" pass can reserve
+        # large allocator blocks (many masks/frame); release what's unused before
+        # the per-frame main loop starts.
+        torch.cuda.empty_cache()
         obj_classes = ObjectClasses(
             classes_file_path=discovered_classes_path,
             bg_classes=detections_exp_cfg['bg_classes'],

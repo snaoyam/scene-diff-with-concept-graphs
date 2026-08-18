@@ -94,9 +94,10 @@ def compute_dinov3_dense_features(image_rgb, dinov3_model, device):
     Returns (D, H, W) L2-normalized torch tensor on `device`.
     '''
     h, w = image_rgb.shape[:2]
-    x = dinov3_preprocess(image_rgb).unsqueeze(0).to(device)
+    # dinov3_model runs in bfloat16 (see rerun_realtime_mapping.py) -- match input dtype.
+    x = dinov3_preprocess(image_rgb).unsqueeze(0).to(device, dtype=torch.bfloat16)
     with torch.no_grad():
-        patch_tokens = dinov3_model.forward_features(x)["x_norm_patchtokens"]
+        patch_tokens = dinov3_model.forward_features(x)["x_norm_patchtokens"].float()
     n_side = int(patch_tokens.shape[1] ** 0.5)
     feat_grid = patch_tokens.reshape(1, n_side, n_side, -1).permute(0, 3, 1, 2)
     dense = F.interpolate(feat_grid, size=(h, w), mode="bilinear", align_corners=False)[0]
