@@ -1,6 +1,5 @@
 
 import copy
-import matplotlib
 import torch
 import numpy as np
 import open3d as o3d
@@ -51,45 +50,7 @@ class DetectionList(list):
     def __iadd__(self, other):
         self.extend(other)
         return self
-    
-    def get_most_common_class(self) -> list[int]:
-        classes = []
-        for d in self:
-            values, counts = np.unique(np.asarray(d['class_id']), return_counts=True)
-            most_common_class = values[np.argmax(counts)]
-            classes.append(most_common_class)
-        return classes
-    
-    def color_by_most_common_classes(self, obj_classes, color_bbox: bool=True):
-        '''
-        Color the point cloud of each detection by the most common class
-        '''
-        classes = self.get_most_common_class()
-        for d, c in zip(self, classes):
-            # color = obj_classes[str(c)]
-            color = obj_classes.get_class_color(int(c))
-            d['pcd'].paint_uniform_color(color)
-            if color_bbox:
-                d['bbox'].color = color
-                
-    def color_by_instance(self):
-        if len(self) == 0:
-            # Do nothing
-            return
-        
-        if "inst_color" in self[0]:
-            for d in self:
-                d['pcd'].paint_uniform_color(d['inst_color'])
-                d['bbox'].color = d['inst_color']
-        else:
-            cmap = matplotlib.colormaps.get_cmap("turbo")
-            instance_colors = cmap(np.linspace(0, 1, len(self)))
-            instance_colors = instance_colors[:, :3]
-            for i in range(len(self)):
-                self[i]['pcd'].paint_uniform_color(instance_colors[i])
-                self[i]['bbox'].color = instance_colors[i]
-            
-    
+
 class MapObjectList(DetectionList):
     def to_serializable(self):
         s_obj_list = []

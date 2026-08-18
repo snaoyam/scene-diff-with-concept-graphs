@@ -2,6 +2,7 @@ import json
 from openai import OpenAI
 import os
 import base64
+import io
 
 from PIL import Image
 import numpy as np
@@ -57,6 +58,32 @@ Your response should be a JSON object with the format:
 }
 
 Do not include any additional information in your response.
+'''
+
+# For scene vocabulary discovery: enumerating all objects visible in a whole frame
+system_prompt_frame_objects = '''
+You are an agent specializing in identifying objects in an image of an indoor scene.
+
+Your task is to list every distinct type of physical object visible in the image. Name each one using as few words as possible -- ideally 1-2 words, never more than 3 -- and use a short, generic category name (e.g. "lamp", "pillow", "mug"), not a proper noun or brand name. List each object type only once, even if multiple instances of it are visible. Do not include "wall", "floor", or "ceiling" unless they are visually distinctive (e.g. "painting" on the wall is fine, "wall" itself is not).
+
+Your response must be a JSON object with the format:
+{
+    "objects": ["object type 1", "object type 2", ...]
+}
+'''
+
+# For scene vocabulary discovery: naming a single cropped object segment
+system_prompt_segment_name = '''
+You are an agent specializing in naming a single object shown in a cropped image.
+
+The image shows one segmented object, possibly with some surrounding context. Your task is to name this object using as few words as possible -- ideally 1-2 words, never more than 3. Use a short, generic category name (e.g. "coffee mug"), not a proper noun or brand name.
+
+If the crop does not show a distinct physical object (e.g. it is a piece of wall, floor, texture, shadow, or empty space), return an empty string for the name.
+
+Your response must be a JSON object with the format:
+{
+    "name": "object name"
+}
 '''
 
 # 모델 이름을 로컬 vLLM 서버에 로드된 모델로 변경
@@ -120,6 +147,73 @@ def encode_image_for_openai(image_path: str, resize = False, target_size: int=51
         # print("Temporary file removed.")
 
     return encoded_image
+
+def encode_image_for_openai_from_pil(image: Image.Image) -> str:
+    """Same base64 contract as encode_image_for_openai(), for an in-memory PIL
+    image (e.g. a SAM-segment crop) that was never written to disk."""
+    buf = io.BytesIO()
+    image.convert("RGB").save(buf, format="JPEG")
+    return base64.b64encode(buf.getvalue()).decode('utf-8')
+
+
+def get_frame_object_list(client: OpenAI, image_path: str) -> list:
+    """Asks the VLM to enumerate every distinct object type visible in a whole
+    frame. Used for scene vocabulary discovery (see general_utils.discover_scene_vocabulary).
+    Returns a list of lowercase, stripped object names -- empty on any failure."""
+    base64_image = encode_image_for_openai(image_path)
+
+    messages = [
+        {"role": "system", "content": system_prompt_frame_objects},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+            ],
+        },
+    ]
+
+    try:
+        response = client.chat.completions.create(
+            model=f"{gpt_model}",
+            messages=messages,
+            response_format={"type": "json_object"}
+        )
+        objects = json.loads(response.choices[0].message.content.strip()).get("objects", [])
+        return [obj.strip().lower() for obj in objects if isinstance(obj, str) and obj.strip()]
+    except Exception as e:
+        print(f"An error occurred in get_frame_object_list: {str(e)}")
+        return []
+
+
+def get_segment_object_name(client: OpenAI, image_crop: Image.Image) -> str:
+    """Asks the VLM to name a single cropped object segment in as few words as
+    possible. Used for scene vocabulary discovery (see
+    general_utils.discover_scene_vocabulary). Returns a lowercase, stripped
+    name, or "" on any failure or if the crop isn't a distinct object."""
+    base64_image = encode_image_for_openai_from_pil(image_crop)
+
+    messages = [
+        {"role": "system", "content": system_prompt_segment_name},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+            ],
+        },
+    ]
+
+    try:
+        response = client.chat.completions.create(
+            model=f"{gpt_model}",
+            messages=messages,
+            response_format={"type": "json_object"}
+        )
+        name = json.loads(response.choices[0].message.content.strip()).get("name", "")
+        return name.strip().lower() if isinstance(name, str) else ""
+    except Exception as e:
+        print(f"An error occurred in get_segment_object_name: {str(e)}")
+        return ""
+
 
 def consolidate_captions(client: OpenAI, captions: list):
     # Formatting the captions into a single string prompt

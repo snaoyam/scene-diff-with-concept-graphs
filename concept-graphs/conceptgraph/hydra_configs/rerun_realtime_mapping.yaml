@@ -93,8 +93,6 @@ save_pcd: !!bool True
 save_json: !!bool True
 save_suffix: exp_streamlined_mapping_base_suffix
 
-class_agnostic: !!bool False   # If set, the color will be set by instance, rather than most common class
-
 # SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
 # ScanNet-style RGB-D sequences by conceptgraph/dataset/scenediff_to_conceptgraph.py.
 # Each SceneDiff pair produces two ConceptGraph scenes sharing one Pi3-estimated
@@ -109,7 +107,6 @@ scene_pair: living_room_17_living_room_18
 scene_variant: before # overridden per run by rerun_realtime_mapping.py; valid values: "before", "after"
 scene_id: ${scene_pair}/${scene_variant}
 dataset_config: ${repo_root}/conceptgraph/dataset/dataconfigs/scenediff/${scene_id}.yaml
-render_camera_path: ${repo_root}/conceptgraph/dataset/dataconfigs/replica_room0.json
 
 sam_variant: sam # sam
 sam_encoder_version: "vit_h"
@@ -121,7 +118,28 @@ dinov3_repo_dir: /node_data/urp26su_dongwoo/concept-graphs-project/dinov3
 dinov3_checkpoint_path: ${dinov3_repo_dir}/dinov3_vith16plus_pretrain_lvd1689m-7c1da9a5.pth
 dinov3_model_name: dinov3_vith16plus
 
-classes_file: ${repo_root}/conceptgraph/scannet200_classes.txt
+# Dynamic per-scene-variant vocabulary discovery (replaces the old fixed
+# classes_file: scannet200_classes.txt limited detection to ~200 ScanNet
+# classes, too narrow for arbitrary scenes). See discover_scene_vocabulary()
+# in utils/general_utils.py.
+discovery_voxel_size: 0.1               # coarse (10x downsample_voxel_size) -- measuring which broad
+                                         # regions a frame sees, not fine reconstruction detail
+discovery_pixel_stride: 4               # subsample every 4th pixel when backprojecting a frame for
+                                         # coverage; keeps the per-scene coverage pre-pass fast
+discovery_max_representative_frames: null   # optional hard cap on greedy-selected frames (null = uncapped;
+                                             # the coverage stopping criterion is already self-limiting)
+discovery_sam_conf: 0.25                # SAM top-level box-confidence filter (ultralytics' own default).
+                                         # Note: SAM automatic-mode point-grid density (points_stride) is NOT
+                                         # exposed here -- the installed ultralytics version doesn't forward
+                                         # generate()-specific kwargs through predict(), only `conf` reaches it.
+discovery_sam_min_segment_area_px: 400  # drop tiny/degenerate SAM segments before spending a VLM call
+                                         # on them (distinct from mask_area_threshold=25 below, which
+                                         # gates a much cheaper stage -- a VLM round trip needs a higher bar)
+discovery_sam_max_segment_area_ratio: 0.85  # drop near-whole-frame segments (walls/floors), analogous
+                                             # to max_bbox_area_ratio but a separate knob for this stage
+discovery_sam_max_segments_per_frame: 60    # hard cap on segments kept per frame after filtering (keeps
+                                             # the largest); primary lever for bounding VLM call volume
+
 bg_classes: ["wall", "floor", "ceiling"]
 skip_bg: !!bool False
 
@@ -149,9 +167,6 @@ save_objects_all_frames: !!bool False
 
 downsample_voxel_size: 0.01
 obj_pcd_max_points: 5000
-
-debug_render: !!bool False     # If True, the vis.run() will be called and used for debugging
-vis_render: !!bool False       # If True, the objects will be rendered to a video.
 
 denoise_interval: 5           # Run DBSCAN every k frame. This operation is heavy
 filter_interval: 5            # Filter objects that have too few associations or are too small

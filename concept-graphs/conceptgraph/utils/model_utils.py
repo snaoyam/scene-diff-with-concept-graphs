@@ -14,6 +14,24 @@ dinov3_preprocess = v2.Compose([
     v2.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
 ])
 
+def crop_with_padding(image: Image.Image, xyxy, padding: int = 20) -> Image.Image:
+    """Crop `image` to `xyxy`, expanded by up to `padding` px on each side
+    (clamped to image bounds)."""
+    x_min, y_min, x_max, y_max = xyxy
+    image_width, image_height = image.size
+    left_padding = min(padding, x_min)
+    top_padding = min(padding, y_min)
+    right_padding = min(padding, image_width - x_max)
+    bottom_padding = min(padding, image_height - y_max)
+
+    x_min -= left_padding
+    y_min -= top_padding
+    x_max += right_padding
+    y_max += bottom_padding
+
+    return image.crop((x_min, y_min, x_max, y_max))
+
+
 # @profile
 def compute_clip_features_batched(image, detections, clip_model, clip_preprocess, clip_tokenizer, classes, device):
 
@@ -26,19 +44,7 @@ def compute_clip_features_batched(image, detections, clip_model, clip_preprocess
 
     # Prepare data for batch processing
     for idx in range(len(detections.xyxy)):
-        x_min, y_min, x_max, y_max = detections.xyxy[idx]
-        image_width, image_height = image.size
-        left_padding = min(padding, x_min)
-        top_padding = min(padding, y_min)
-        right_padding = min(padding, image_width - x_max)
-        bottom_padding = min(padding, image_height - y_max)
-
-        x_min -= left_padding
-        y_min -= top_padding
-        x_max += right_padding
-        y_max += bottom_padding
-
-        cropped_image = image.crop((x_min, y_min, x_max, y_max))
+        cropped_image = crop_with_padding(image, detections.xyxy[idx], padding)
         preprocessed_image = clip_preprocess(cropped_image).unsqueeze(0)
         preprocessed_images.append(preprocessed_image)
 

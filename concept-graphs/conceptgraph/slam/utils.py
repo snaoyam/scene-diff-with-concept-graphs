@@ -889,9 +889,110 @@ def batch_mask_depth_to_points_colors(
     return points, colors
 
 
+def backproject_frame_to_voxel_indices(
+    depth_array: np.ndarray,
+    cam_K: np.ndarray,
+    pose: np.ndarray,
+    voxel_size: float,
+    pixel_stride: int = 4,
+    max_depth: float = None,
+) -> np.ndarray:
+    """
+    Backprojects a single unmasked frame's depth map into world-space, on a
+    strided pixel grid (cheap coverage estimate, not a reconstruction), and
+    returns the set of unique voxel-grid cells it touches.
+
+    pose must be the same raw camera-to-world convention used elsewhere in this
+    file to backproject objects (dataset.poses[frame_idx], i.e. what
+    detections_to_obj_pcd_and_bbox receives as trans_pose) -- not
+    dataset.transformed_poses, which is a different (first-frame-relative)
+    coordinate frame.
+
+    Returns:
+        (M, 3) int array of unique (vx, vy, vz) voxel indices = floor(world_xyz / voxel_size).
+    """
+    H, W = depth_array.shape
+    fx, fy, cx, cy = cam_K[0, 0], cam_K[1, 1], cam_K[0, 2], cam_K[1, 2]
+
+    ys, xs = np.mgrid[0:H:pixel_stride, 0:W:pixel_stride]
+    z = depth_array[ys, xs]
+    valid = z > 0
+    if max_depth is not None:
+        valid &= z <= max_depth
+    if not np.any(valid):
+        return np.empty((0, 3), dtype=np.int32)
+
+    xs, ys, z = xs[valid], ys[valid], z[valid]
+    x_cam = (xs - cx) * z / fx
+    y_cam = (ys - cy) * z / fy
+    pts_cam = np.stack([x_cam, y_cam, z], axis=-1)  # (N, 3)
+
+    pts_world = pts_cam @ pose[:3, :3].T + pose[:3, 3]
+
+    voxel_idx = np.floor(pts_world / voxel_size).astype(np.int32)
+    return np.unique(voxel_idx, axis=0)
+
+
+def select_representative_frames(
+    frame_indices: list,
+    depth_arrays: list,
+    poses: np.ndarray,
+    cam_Ks: list,
+    voxel_size: float = 0.1,
+    pixel_stride: int = 4,
+) -> tuple:
+    """
+    Greedily selects the smallest subset of frames whose combined 3D coverage
+    equals the coverage achievable by using every candidate frame -- i.e. every
+    voxel touched by any frame ends up touched by some selected frame. The
+    coverage target is derived from the scene's own frames rather than a
+    hand-picked percentage, in the same spirit as build_final_object_graph's
+    auto-selected edge-distance multiplier.
+
+    Args:
+        frame_indices: candidate frame indices, aligned with depth_arrays/poses/cam_Ks.
+        depth_arrays: list of (H, W) depth arrays in meters, one per frame_indices entry.
+        poses: (len(frame_indices), 4, 4) raw camera-to-world poses.
+        cam_Ks: list of (3, 3) camera intrinsics, one per frame_indices entry.
+
+    Returns:
+        (selected_frame_indices, info) where selected_frame_indices is a list of
+        entries from frame_indices in greedy pick order (largest marginal coverage
+        gain first), and info is a dict with voxel_size/pixel_stride/total_scene_voxels.
+    """
+    frame_voxels = []
+    for depth_array, pose, cam_K in zip(depth_arrays, poses, cam_Ks):
+        voxels = backproject_frame_to_voxel_indices(depth_array, cam_K, pose, voxel_size, pixel_stride)
+        frame_voxels.append(set(map(tuple, voxels)))
+
+    full_scene_voxels = set().union(*frame_voxels) if frame_voxels else set()
+
+    covered = set()
+    remaining = set(range(len(frame_indices)))
+    selected = []
+    while covered != full_scene_voxels and remaining:
+        best_i, best_gain = None, -1
+        for i in remaining:
+            gain = len(frame_voxels[i] - covered)
+            if gain > best_gain:
+                best_i, best_gain = i, gain
+        if best_gain <= 0:
+            break
+        selected.append(frame_indices[best_i])
+        covered |= frame_voxels[best_i]
+        remaining.discard(best_i)
+
+    info = {
+        "voxel_size": voxel_size,
+        "pixel_stride": pixel_stride,
+        "total_scene_voxels": len(full_scene_voxels),
+    }
+    return selected, info
+
+
 def detections_to_obj_pcd_and_bbox(
-    depth_array, 
-    masks, 
+    depth_array,
+    masks,
     cam_K, 
     image_rgb=None, 
     trans_pose=None, 

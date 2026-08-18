@@ -16,9 +16,7 @@ import cv2
 import numpy as np
 import scipy.ndimage as ndi
 import torch
-from PIL import Image
 from tqdm import trange
-from open3d.io import read_pinhole_camera_parameters
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import open_clip
@@ -33,27 +31,26 @@ from conceptgraph.utils.vlm import consolidate_captions, get_openai_client
 from conceptgraph.utils.ious import mask_subtract_contained, compute_2d_max_overlap_batch, group_same_object_detections
 from conceptgraph.utils.general_utils import (
     ObjectClasses,
+    discover_scene_vocabulary,
     get_det_out_path,
+    get_discovered_classes_path,
     get_exp_out_path,
     get_vlm_captions,
     load_saved_detections,
     measure_time,
     save_detection_results,
-    save_edge_json, 
+    save_edge_json,
     save_hydra_config,
-    save_obj_json, 
-    save_objects_for_frame, 
-    save_pointcloud, 
-    should_exit_early, 
-    vis_render_image
+    save_obj_json,
+    save_objects_for_frame,
+    save_pointcloud,
+    should_exit_early,
 )
 from conceptgraph.dataset.datasets_common import get_dataset
 from conceptgraph.utils.vis import (
-    OnlineObjectRenderer, 
-    save_video_from_frames, 
-    vis_result_fast_on_depth, 
-    vis_result_for_vlm, 
-    vis_result_fast, 
+    vis_result_fast_on_depth,
+    vis_result_for_vlm,
+    vis_result_fast,
     save_video_detections
 )
 from conceptgraph.slam.slam_classes import MapEdgeMapping, MapObjectList
@@ -165,15 +162,6 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     objects = MapObjectList(device=cfg.device)
     map_edges = MapEdgeMapping(objects)
 
-    # For visualization
-    if cfg.vis_render:
-        view_param = read_pinhole_camera_parameters(cfg.render_camera_path)
-        obj_renderer = OnlineObjectRenderer(
-            view_param = view_param,
-            base_objects = None, 
-            gray_map = False,
-        )
-        frames = []
     # output folder for this mapping experiment
     exp_out_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
 
@@ -182,11 +170,17 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
 
     # we need to make sure to use the same classes as the ones used in the detections
     detections_exp_cfg = cfg_to_dict(cfg)
-    obj_classes = ObjectClasses(
-        classes_file_path=detections_exp_cfg['classes_file'], 
-        bg_classes=detections_exp_cfg['bg_classes'], 
-        skip_bg=detections_exp_cfg['skip_bg']
-    )
+
+    # Per-scene-variant vocabulary, discovered (not a fixed classes file -- see
+    # discover_scene_vocabulary) once per detections_exp_suffix and cached under
+    # det_exp_path for reuse. Built below, either freshly (run_detections=True)
+    # or loaded from a prior run's cached file (run_detections=False).
+    discovered_classes_path = get_discovered_classes_path(det_exp_path)
+    # get_openai_client() just constructs a client object, no network I/O, so it's
+    # safe to build unconditionally -- scene vocabulary discovery needs it whenever
+    # run_detections is True, regardless of cfg.make_edges (which only gates the
+    # later caption/relation VLM usage).
+    openai_client = get_openai_client()
 
     # if we need to do detections
     run_detections = check_run_detections(cfg.force_detection, det_exp_path)
@@ -227,6 +221,32 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         else:
             detection_model, sam_predictor, clip_model, clip_preprocess, clip_tokenizer, dinov3_model = shared_models
 
+        # Discover this scene variant's object vocabulary (representative frames +
+        # whole-frame VLM object listing + SAM "segment everything" per-segment VLM
+        # naming, merged) instead of using a fixed classes file -- see
+        # discover_scene_vocabulary(). Reuses the sam_predictor/openai_client already
+        # set up above; no extra model loading.
+        discovered_classes_path = discover_scene_vocabulary(
+            dataset=dataset,
+            sam_predictor=sam_predictor,
+            openai_client=openai_client,
+            det_exp_path=det_exp_path,
+            detections_exp_suffix=cfg.detections_exp_suffix,
+            voxel_size=cfg.discovery_voxel_size,
+            pixel_stride=cfg.discovery_pixel_stride,
+            max_representative_frames=cfg.discovery_max_representative_frames,
+            sam_conf=cfg.discovery_sam_conf,
+            sam_min_segment_area_px=cfg.discovery_sam_min_segment_area_px,
+            sam_max_segment_area_ratio=cfg.discovery_sam_max_segment_area_ratio,
+            sam_max_segments_per_frame=cfg.discovery_sam_max_segments_per_frame,
+            device=cfg.device,
+        )
+        obj_classes = ObjectClasses(
+            classes_file_path=discovered_classes_path,
+            bg_classes=detections_exp_cfg['bg_classes'],
+            skip_bg=detections_exp_cfg['skip_bg'],
+        )
+
         # Set the classes for the detection model. cache_clip_model=False: the cached
         # self.clip_model (default cache_clip_model=True) is a real submodule of
         # detection_model.model, so later predict(..., quantize=16) calls -- which run
@@ -249,12 +269,18 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         if detection_model.predictor:
             detection_model.predictor.model.names = detection_classes
     else:
+        if not discovered_classes_path.exists():
+            raise FileNotFoundError(
+                f"No cached discovered vocabulary at {discovered_classes_path}. Run with "
+                f"force_detection=True for detections_exp_suffix='{cfg.detections_exp_suffix}' "
+                f"at least once before reusing cached detections."
+            )
+        obj_classes = ObjectClasses(
+            classes_file_path=discovered_classes_path,
+            bg_classes=detections_exp_cfg['bg_classes'],
+            skip_bg=detections_exp_cfg['skip_bg'],
+        )
         print("\n".join([f"NOT Running detections... version: {VERSION_TEXT}"] * 10))
-
-    # Only initialize OpenAI when edges/captions are enabled
-    openai_client = None
-    if cfg.make_edges:
-        openai_client = get_openai_client()
 
     save_hydra_config(cfg, exp_out_path)
     save_hydra_config(detections_exp_cfg, exp_out_path, is_detection_config=True)
@@ -284,7 +310,6 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         # Read info about current frame from dataset
         # color image
         color_path = Path(dataset.color_paths[frame_idx])
-        image_original_pil = Image.open(color_path)
         # color and depth tensors, and camera instrinsics matrix
         color_tensor, depth_tensor, intrinsics, *_ = dataset[frame_idx]
 
@@ -637,25 +662,6 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 color_path
             )
         
-        if cfg.vis_render:
-            # render a frame, if needed (not really used anymore since rerun)
-            vis_render_image(
-                objects,
-                obj_classes,
-                obj_renderer,
-                image_original_pil,
-                adjusted_pose,
-                frames,
-                frame_idx,
-                color_path,
-                cfg.obj_min_detections,
-                cfg.class_agnostic,
-                cfg.debug_render,
-                is_final_frame,
-                cfg.exp_out_path,
-                cfg.exp_suffix,
-            )
-
         if cfg.periodically_save_pcd and (counter % cfg.periodically_save_pcd_interval == 0):
             # save the pointcloud
             save_pointcloud(
@@ -790,7 +796,6 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             pickle.dump({
                 'cfg': cfg,
                 'class_names': obj_classes.get_classes_arr(),
-                'class_colors': obj_classes.get_class_color_dict_by_index(),
             }, f)
 
     if run_detections:

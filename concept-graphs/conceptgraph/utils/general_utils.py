@@ -1,4 +1,3 @@
-from copy import deepcopy
 import gzip
 import json
 import logging
@@ -7,12 +6,20 @@ from pathlib import Path
 import pickle
 # from conceptgraph.utils.vis import annotate_for_vlm, filter_detections, plot_edges_from_vlm
 from conceptgraph.slam.slam_classes import MapObjectList
-from conceptgraph.slam.utils import prepare_objects_save_vis
+from conceptgraph.slam.utils import prepare_objects_save_vis, select_representative_frames
 from conceptgraph.utils.ious import mask_subtract_contained
-from conceptgraph.utils.vis import save_video_from_frames
+from conceptgraph.utils.model_utils import crop_with_padding
 import supervision as sv
-import scipy.ndimage as ndi 
-from conceptgraph.utils.vlm import get_obj_captions_from_image_gpt4v, vlm_extract_object_captions
+import scipy.ndimage as ndi
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from conceptgraph.utils.vlm import (
+    get_obj_captions_from_image_gpt4v,
+    vlm_extract_object_captions,
+    get_frame_object_list,
+    get_segment_object_name,
+)
 import cv2
 import re
 
@@ -21,6 +28,7 @@ from omegaconf import OmegaConf
 import torch
 import numpy as np
 import time
+from PIL import Image
 
 def cfg_to_dict(input_cfg):
     """ Convert a Hydra configuration object to a native Python dictionary,
@@ -96,11 +104,16 @@ def mask_iou(mask1, mask2):
         return 0
     return intersection / union
 
+def _class_id_to_color(class_id: int) -> tuple:
+    """Deterministic per-class-id color (0-1 float RGB) for annotate_for_vlm's contour
+    drawing -- no external storage needed, just a colormap indexed by class_id (same
+    approach as scenegraph_viz.get_object_color, indexed by obj_num there instead)."""
+    return plt.get_cmap("tab20")(class_id % 20)[:3]
+
 def annotate_for_vlm(
-    image: np.ndarray, 
+    image: np.ndarray,
     detections: sv.Detections,
-    obj_classes, 
-    labels: list[str], 
+    labels: list[str],
     save_path=None, 
     color: tuple=(0, 255, 0), 
     thickness: int=2, 
@@ -137,7 +150,7 @@ def annotate_for_vlm(
         label_name = re.sub(r'\s*\d+$', '', label).strip()
         bbox = detections.xyxy[i]
         
-        obj_color = obj_classes.get_class_color(int(detections.class_id[i]))
+        obj_color = _class_id_to_color(int(detections.class_id[i]))
         # multiply by 255 to convert to BGR
         obj_color = tuple([int(c * 255) for c in obj_color])
         
@@ -364,7 +377,7 @@ def get_vlm_captions(image, curr_det, obj_classes, detection_class_labels, det_e
     captions = None
     if make_captions_flag:
         vis_save_path_for_vlm = get_vlm_annotated_image_path(det_exp_vis_path, color_path)
-        annotated_image_for_vlm, _ = annotate_for_vlm(image, filtered_detections, obj_classes, labels, save_path=vis_save_path_for_vlm)
+        annotated_image_for_vlm, _ = annotate_for_vlm(image, filtered_detections, labels, save_path=vis_save_path_for_vlm)
 
         label_list = []
         for label in labels:
@@ -379,7 +392,140 @@ def get_vlm_captions(image, curr_det, obj_classes, detection_class_labels, det_e
         captions = get_obj_captions_from_image_gpt4v(openai_client, vis_save_path_for_vlm, label_list)
 
     return labels, captions
-    
+
+
+def get_discovered_classes_path(det_exp_path):
+    return det_exp_path / "discovered_classes.txt"
+
+
+def get_representative_frames_path(det_exp_path):
+    return det_exp_path / "representative_frames.json"
+
+
+def discover_scene_vocabulary(
+    dataset,
+    sam_predictor,
+    openai_client,
+    det_exp_path,
+    detections_exp_suffix,
+    voxel_size,
+    pixel_stride,
+    max_representative_frames,
+    sam_conf,
+    sam_min_segment_area_px,
+    sam_max_segment_area_ratio,
+    sam_max_segments_per_frame,
+    device,
+):
+    """
+    Discovers a per-scene-variant object vocabulary to replace a fixed classes
+    file: selects a minimal set of representative frames covering the scene's
+    3D extent (see slam.utils.select_representative_frames), asks the VLM to
+    enumerate objects visible in each whole frame, and separately asks it to
+    name each SAM "segment everything" mask crop in that frame. The union of
+    both becomes the vocabulary. Returns the path to the saved classes .txt
+    file, one name per line -- the format ObjectClasses reads.
+
+    The representative frame list is cached under representative_frames_path
+    (reused verbatim on a later call with the same det_exp_path, even if the
+    VLM/SAM naming is redone) so it can be inspected/reused later.
+    """
+    det_exp_path.mkdir(parents=True, exist_ok=True)
+    discovered_classes_path = get_discovered_classes_path(det_exp_path)
+    representative_frames_path = get_representative_frames_path(det_exp_path)
+
+    if representative_frames_path.exists():
+        with open(representative_frames_path, "r") as f:
+            representative_frame_indices = json.load(f)["representative_frame_indices"]
+        coverage_info = {"voxel_size": voxel_size, "pixel_stride": pixel_stride, "total_scene_voxels": None}
+    else:
+        frame_indices = list(range(len(dataset)))
+        depth_arrays, poses, cam_Ks = [], [], []
+        for idx in frame_indices:
+            _, depth_tensor, intrinsics, *_ = dataset[idx]
+            depth_arrays.append(depth_tensor[..., 0].cpu().numpy())
+            poses.append(dataset.poses[idx].cpu().numpy())
+            cam_Ks.append(intrinsics.cpu().numpy()[:3, :3])
+
+        representative_frame_indices, coverage_info = select_representative_frames(
+            frame_indices, depth_arrays, np.stack(poses), cam_Ks,
+            voxel_size=voxel_size, pixel_stride=pixel_stride,
+        )
+
+    if max_representative_frames is not None:
+        representative_frame_indices = representative_frame_indices[:max_representative_frames]
+
+    discovered = set()
+    per_frame_stats = {}
+
+    for frame_idx in representative_frame_indices:
+        color_path = Path(dataset.color_paths[frame_idx])
+        image = cv2.imread(str(color_path))
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(image_rgb)
+        H, W = image_rgb.shape[:2]
+
+        frame_objects = get_frame_object_list(openai_client, str(color_path))
+        discovered.update(frame_objects)
+
+        # Passing bboxes/points/labels=None here triggers ultralytics SAM's automatic
+        # "segment everything" mode internally. points_stride/conf_thres etc. (the
+        # generate()-specific knobs) aren't reachable through this predict() call in
+        # the installed ultralytics version -- Model.predict() validates all extra
+        # kwargs as top-level cfg overrides (check_dict_alignment) and doesn't forward
+        # them to inference()/generate() -- so only the standard `conf` (box-score
+        # filter) is configurable here; points density uses ultralytics' own default.
+        sam_out = sam_predictor.predict(str(color_path), verbose=False, conf=sam_conf)
+        has_masks = sam_out[0].masks is not None and len(sam_out[0].masks.data) > 0
+        masks = sam_out[0].masks.data.cpu().numpy() if has_masks else np.empty((0, H, W), dtype=bool)
+        boxes = sam_out[0].boxes.xyxy.cpu().numpy() if has_masks else np.empty((0, 4))
+
+        areas = masks.reshape(len(masks), -1).sum(axis=1) if len(masks) else np.empty((0,))
+        keep_idx = np.nonzero((areas >= sam_min_segment_area_px) & (areas <= sam_max_segment_area_ratio * H * W))[0]
+        if len(keep_idx) > sam_max_segments_per_frame:
+            keep_idx = keep_idx[np.argsort(-areas[keep_idx])[:sam_max_segments_per_frame]]
+
+        segment_names = []
+        for i in keep_idx:
+            crop = crop_with_padding(pil_image, boxes[i], padding=20)
+            name = get_segment_object_name(openai_client, crop)
+            if name:
+                segment_names.append(name)
+        discovered.update(segment_names)
+
+        per_frame_stats[str(frame_idx)] = {
+            "full_frame_objects": len(frame_objects),
+            "segment_masks_total": int(len(masks)),
+            "segment_objects_kept": len(segment_names),
+        }
+
+    discovered_classes = sorted({c.strip().lower() for c in discovered if c.strip()})
+
+    with open(discovered_classes_path, "w") as f:
+        for cls in discovered_classes:
+            f.write(cls + "\n")
+
+    with open(representative_frames_path, "w") as f:
+        json.dump({
+            "detections_exp_suffix": detections_exp_suffix,
+            "num_total_frames": len(dataset),
+            "representative_frame_indices": list(representative_frame_indices),
+            "representative_color_paths": [str(dataset.color_paths[i]) for i in representative_frame_indices],
+            "coverage": coverage_info,
+            "discovery_params": {
+                "sam_conf": sam_conf,
+                "sam_min_segment_area_px": sam_min_segment_area_px,
+                "sam_max_segment_area_ratio": sam_max_segment_area_ratio,
+                "sam_max_segments_per_frame": sam_max_segments_per_frame,
+                "max_representative_frames": max_representative_frames,
+            },
+            "per_frame_object_counts": per_frame_stats,
+            "num_discovered_classes": len(discovered_classes),
+        }, f, indent=2)
+
+    return discovered_classes_path
+
+
 def measure_time(func):
     def wrapper(*args, **kwargs):
         start_time = time.time()
@@ -468,11 +614,11 @@ def load_saved_detections(base_path):
         
 class ObjectClasses:
     """
-    Manages object classes and their associated colors, allowing for exclusion of background classes.
+    Manages object classes, allowing for exclusion of background classes.
 
-    This class facilitates the creation or loading of a color map from a specified file containing
-    class names. It also manages background classes based on configuration, allowing for their
-    inclusion or exclusion. Background classes are ["wall", "floor", "ceiling"] by default.
+    This class facilitates the loading of class names from a specified file. It also manages
+    background classes based on configuration, allowing for their inclusion or exclusion.
+    Background classes are ["wall", "floor", "ceiling"] by default.
 
     Attributes:
         classes_file_path (str): Path to the file containing class names, one per line.
@@ -480,77 +626,33 @@ class ObjectClasses:
     Usage:
         obj_classes = ObjectClasses(classes_file_path, skip_bg=True)
         model.set_classes(obj_classes.get_classes_arr())
-        some_class_color = obj_classes.get_class_color(index or class_name)
     """
     def __init__(self, classes_file_path, bg_classes, skip_bg):
         self.classes_file_path = Path(classes_file_path)
         self.bg_classes = bg_classes
         self.skip_bg = skip_bg
-        self.classes, self.class_to_color = self._load_or_create_colors()
+        self.classes = self._load_classes()
 
-    def _load_or_create_colors(self):
+    def _load_classes(self):
         with open(self.classes_file_path, "r") as f:
-            all_classes = [cls.strip() for cls in f.readlines()]
-        
-        # Filter classes based on the skip_bg parameter
+            all_classes = [cls.strip() for cls in f.readlines() if cls.strip()]
+
         if self.skip_bg:
-            classes = [cls for cls in all_classes if cls not in self.bg_classes]
-        else:
-            classes = all_classes
-
-        colors_file_path = self.classes_file_path.parent / f"{self.classes_file_path.stem}_colors.json"
-        if colors_file_path.exists():
-            with open(colors_file_path, "r") as f:
-                class_to_color = json.load(f)
-            # Ensure color map only includes relevant classes
-            class_to_color = {cls: class_to_color[cls] for cls in classes if cls in class_to_color}
-        else:
-            class_to_color = {class_name: list(np.random.rand(3).tolist()) for class_name in classes}
-            with open(colors_file_path, "w") as f:
-                json.dump(class_to_color, f)
-
-        return classes, class_to_color
+            return [cls for cls in all_classes if cls not in self.bg_classes]
+        return all_classes
 
     def get_classes_arr(self):
         """
         Returns the list of class names, excluding background classes if configured to do so.
         """
         return self.classes
-    
+
     def get_bg_classes_arr(self):
         """
         Returns the list of background class names, if configured to do so.
         """
         return self.bg_classes
 
-    def get_class_color(self, key):
-        """
-        Retrieves the color associated with a given class name or index.
-        
-        Args:
-            key (int or str): The index or name of the class.
-        
-        Returns:
-            list: The color (RGB values) associated with the class.
-        """
-        if isinstance(key, int):
-            if key < 0 or key >= len(self.classes):
-                raise IndexError("Class index out of range.")
-            class_name = self.classes[key]
-        elif isinstance(key, str):
-            class_name = key
-            if class_name not in self.classes:
-                raise ValueError(f"{class_name} is not a valid class name.")
-        else:
-            raise ValueError("Key must be an integer index or a string class name.")
-        return self.class_to_color.get(class_name, [0, 0, 0])  # Default color for undefined classes
-
-    def get_class_color_dict_by_index(self):
-        """
-        Returns a dictionary of class colors, just like self.class_to_color, but indexed by class index.
-        """
-        return {str(i): self.get_class_color(i) for i in range(len(self.classes))}
-    
 def save_obj_json(exp_suffix, exp_out_path, objects):
     """
     Saves the objects to a JSON file with the specified suffix.
@@ -641,7 +743,7 @@ def save_pointcloud(exp_suffix, exp_out_path, cfg, objects, obj_classes, edges=N
     - exp_suffix (str): Suffix for the experiment, used in naming the saved file.
     - exp_out_path (Path or str): Output path for the experiment's saved files.
     - objects: The objects to save, assumed to have a `to_serializable()` method.
-    - obj_classes: The object classes, assumed to have `get_classes_arr()` and `get_class_color_dict_by_index()` methods.
+    - obj_classes: The object classes, assumed to have a `get_classes_arr()` method.
     - up_axis, up_direction: detect_up_vector()'s result (slam/utils.py), persisted here so downstream
       debug tooling (e.g. convert_concept_graphs_to_scene_diff_benchmark_data.py's moved-objects plot) can
       reuse this camera-grounded estimate instead of re-deriving a weaker one from the saved points alone.
@@ -652,7 +754,6 @@ def save_pointcloud(exp_suffix, exp_out_path, cfg, objects, obj_classes, edges=N
         'objects': objects.to_serializable(),
         'cfg': cfg_to_dict(cfg),
         'class_names': obj_classes.get_classes_arr(),
-        'class_colors': obj_classes.get_class_color_dict_by_index(),
         'edges': edges.to_serializable() if edges is not None else None,
         'up_axis': up_axis,
         'up_direction': up_direction,
@@ -685,45 +786,4 @@ def save_objects_for_frame(obj_all_frames_out_path, frame_idx, objects, obj_min_
     with gzip.open(save_path, 'wb') as f:
         pickle.dump(result, f)
         
-def add_info_to_image(image, frame_idx, num_objects, color_path):
-    frame_info_text = f"Frame: {frame_idx}, Objects: {num_objects}, Path: {str(color_path)}"
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.5
-    color = (255, 0, 0)
-    thickness = 1
-    line_type = cv2.LINE_AA
-    position = (10, image.shape[0] - 10)
-    cv2.putText(image, frame_info_text, position, font, font_scale, color, thickness, line_type)
-        
-def vis_render_image(objects, obj_classes, obj_renderer, image_original_pil, adjusted_pose, frames, frame_idx, color_path, obj_min_detections, class_agnostic, debug_render, is_final_frame, exp_out_path, exp_suffix):
-    filtered_objects = [
-        deepcopy(obj) for obj in objects 
-        if obj['num_detections'] >= obj_min_detections and not obj['is_background']
-    ]
-    objects_vis = MapObjectList(filtered_objects)
-
-    if class_agnostic:
-        objects_vis.color_by_instance()
-    else:
-        objects_vis.color_by_most_common_classes(obj_classes)
-
-    rendered_image, vis = obj_renderer.step(
-        image=image_original_pil,
-        gt_pose=adjusted_pose,
-        new_objects=objects_vis,
-        paint_new_objects=False,
-        return_vis_handle=debug_render,
-    )
-    
-    if rendered_image is not None:
-        add_info_to_image(rendered_image, frame_idx, len(filtered_objects), color_path)
-        frames.append((rendered_image * 255).astype(np.uint8))
-
-    if is_final_frame:
-        # Save the video
-        video_save_path = exp_out_path / f"s_mapping_{exp_suffix}.mp4"
-        save_video_from_frames(frames, video_save_path)
-        print(f"Save video to {video_save_path}")
-
-
 
