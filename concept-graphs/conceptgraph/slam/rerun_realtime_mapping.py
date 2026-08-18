@@ -305,6 +305,11 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     scenegraph_color_cache = {}
     scenegraph_viz_out_path = exp_out_path / "scenegraph_viz"
 
+    # Debug viz output: masks/labels that survived filter_gobs + mask
+    # subtraction, drawn per frame -- see run_mapping_for_scene loop below.
+    final_masks_out_path = exp_out_path / "final_masks"
+    final_masks_out_path.mkdir(parents=True, exist_ok=True)
+
     exit_early_flag = False
     counter = 0
     for frame_idx in trange(len(dataset)):
@@ -493,11 +498,43 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
 
         gobs = filtered_gobs
 
-        if len(gobs['mask']) == 0: # no detections in this frame
-            continue
-
         # this helps make sure things like pillows on couches are separate objects
         gobs['mask'] = mask_subtract_contained(gobs['xyxy'], gobs['mask'])
+
+        # Debug viz: draw the masks/labels that survived filter_gobs (and mask
+        # subtraction) for this frame. Saved even when nothing survived, so an
+        # empty/background-only image marks a fully-filtered frame.
+        final_masks_detections = sv.Detections(
+            xyxy=gobs['xyxy'],
+            confidence=gobs['confidence'],
+            class_id=gobs['class_id'],
+            mask=gobs['mask'],
+        )
+        final_masks_image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+        annotated_final_masks_image = sv.MaskAnnotator().annotate(
+            scene=final_masks_image_bgr.copy(), detections=final_masks_detections
+        )
+        # Labels at each mask's centroid instead of above a bounding box --
+        # no bbox is drawn at all for this debug viz.
+        for mask_idx in range(len(gobs['mask'])):
+            mask = gobs['mask'][mask_idx]
+            if mask.any():
+                cy, cx = ndi.center_of_mass(mask)
+            else:
+                x1, y1, x2, y2 = gobs['xyxy'][mask_idx]
+                cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+            label = f"{gobs['classes'][gobs['class_id'][mask_idx]]} {gobs['confidence'][mask_idx]:0.2f}"
+            (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            text_origin = (int(cx - text_w / 2), int(cy + text_h / 2))
+            cv2.putText(
+                annotated_final_masks_image, label, text_origin,
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA,
+            )
+        final_masks_save_path = (final_masks_out_path / color_path.name).with_suffix(".jpg")
+        cv2.imwrite(str(final_masks_save_path), annotated_final_masks_image)
+
+        if len(gobs['mask']) == 0: # no detections in this frame
+            continue
 
         obj_pcds_and_bboxes = measure_time(detections_to_obj_pcd_and_bbox)(
             depth_array=depth_array,
@@ -734,16 +771,23 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             frame_obj_indices = set()
             frame_objects = []
             for obj_idx, obj in enumerate(objects):
-                if frame_idx not in obj['image_idx']:
+                local_indices = [i for i, idx in enumerate(obj['image_idx']) if idx == frame_idx]
+                if not local_indices:
                     continue
-                local_idx = obj['image_idx'].index(frame_idx)
                 frame_obj_indices.add(obj_idx)
+                # A merge_overlap_objects pass (or a same-frame double match) can fold more
+                # than one raw detection from this frame into the same 3D object -- union
+                # their masks/boxes instead of picking just the first one, so the larger of
+                # the two isn't silently dropped from this frame's viz.
+                combined_mask = np.logical_or.reduce([obj['mask'][i] for i in local_indices])
+                xyxy_stack = np.stack([obj['xyxy'][i] for i in local_indices]).astype(float)
+                combined_xyxy = np.concatenate([xyxy_stack[:, :2].min(axis=0), xyxy_stack[:, 2:].max(axis=0)])
                 frame_objects.append({
                     'obj_num': obj['curr_obj_num'],
                     'class_name': obj['class_name'],
-                    'caption': obj['captions'][local_idx].get('caption', '') if obj['captions'] else '',
-                    'mask': obj['mask'][local_idx],
-                    'xyxy': obj['xyxy'][local_idx],
+                    'caption': obj['captions'][local_indices[0]].get('caption', '') if obj['captions'] else '',
+                    'mask': combined_mask,
+                    'xyxy': combined_xyxy,
                 })
 
             if not frame_objects:
