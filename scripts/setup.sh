@@ -49,8 +49,6 @@ for sub in slam utils dataset hydra_configs; do
     rsync -a --delete "$LIVE_CG/conceptgraph/$sub/" "$SNAPSHOT_CG/conceptgraph/$sub/"
 done
 cp "$LIVE_CG/conceptgraph/__init__.py" "$SNAPSHOT_CG/conceptgraph/__init__.py"
-cp "$LIVE_CG/conceptgraph/scannet200_classes.txt" "$SNAPSHOT_CG/conceptgraph/scannet200_classes.txt"
-cp "$LIVE_CG/conceptgraph/scannet200_classes_colors.json" "$SNAPSHOT_CG/conceptgraph/scannet200_classes_colors.json"
 cp "$LIVE_CG/setup.py" "$SNAPSHOT_CG/setup.py"
 
 # large/static assets (model weights) are never edited -- symlink instead of copying 1.6G+

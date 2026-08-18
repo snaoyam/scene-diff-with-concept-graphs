@@ -84,7 +84,7 @@ from conceptgraph.utils.general_utils import get_vis_out_path, cfg_to_dict, chec
 from conceptgraph.utils.scenegraph_viz import render_frame_scenegraph
 from conceptgraph.utils.visualize_full_scenegraph import load_scene_graph, render_full_scenegraph
 
-VERSION_TEXT = "modified concept graph 1"
+VERSION_TEXT = "disable captions"
 
 # Disable torch gradient computation
 torch.set_grad_enabled(False)
@@ -103,9 +103,6 @@ def main(cfg : DictConfig):
     # closed image" from imageio/Pillow double-closing PNG file handles). Keep
     # PIL quiet without touching the global verbose setting.
     logging.getLogger("PIL").setLevel(logging.INFO)
-
-    cfg.exp_suffix = EXP_SUFFIX
-    cfg.detections_exp_suffix = DETECTIONS_EXP_SUFFIX
 
     # Build the two ConceptGraphs (before/after) for this SceneDiff pair in one
     # run. Each variant gets its own deep copy of cfg so nothing one variant
@@ -136,7 +133,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     # loading, wandb naming, etc), which has no "concept_graphs" segment.
     concept_graphs_scene_id = f"{cfg.scene_pair}/concept_graphs/{cfg.scene_variant}"
 
-    exp_out_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
+    exp_out_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, EXP_SUFFIX, exps_dir_name=cfg.exps_dir_name)
     exp_out_path.mkdir(exist_ok=True, parents=True)
 
     owandb = OptionalWandB()
@@ -172,10 +169,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     map_edges = MapEdgeMapping(objects)
 
     # output folder for this mapping experiment
-    exp_out_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, cfg.exp_suffix, exps_dir_name=cfg.exps_dir_name)
+    exp_out_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, EXP_SUFFIX, exps_dir_name=cfg.exps_dir_name)
 
     # output folder of the detections experiment to use
-    det_exp_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, cfg.detections_exp_suffix, make_dir=False, exps_dir_name=cfg.exps_dir_name)
+    det_exp_path = get_exp_out_path(cfg.output_root, concept_graphs_scene_id, DETECTIONS_EXP_SUFFIX, make_dir=False, exps_dir_name=cfg.exps_dir_name)
 
     # we need to make sure to use the same classes as the ones used in the detections
     detections_exp_cfg = cfg_to_dict(cfg)
@@ -243,7 +240,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             sam_predictor=sam_predictor,
             openai_client=openai_client,
             det_exp_path=det_exp_path,
-            detections_exp_suffix=cfg.detections_exp_suffix,
+            detections_exp_suffix=DETECTIONS_EXP_SUFFIX,
             voxel_size=cfg.discovery_voxel_size,
             pixel_stride=cfg.discovery_pixel_stride,
             max_representative_frames=cfg.discovery_max_representative_frames,
@@ -288,7 +285,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         if not discovered_classes_path.exists():
             raise FileNotFoundError(
                 f"No cached discovered vocabulary at {discovered_classes_path}. Run with "
-                f"force_detection=True for detections_exp_suffix='{cfg.detections_exp_suffix}' "
+                f"force_detection=True for detections_exp_suffix='{DETECTIONS_EXP_SUFFIX}' "
                 f"at least once before reusing cached detections."
             )
         obj_classes = ObjectClasses(
@@ -302,7 +299,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     save_hydra_config(detections_exp_cfg, exp_out_path, is_detection_config=True)
 
     if cfg.save_objects_all_frames:
-        obj_all_frames_out_path = exp_out_path / "saved_obj_all_frames" / f"det_{cfg.detections_exp_suffix}"
+        obj_all_frames_out_path = exp_out_path / "saved_obj_all_frames" / f"det_{DETECTIONS_EXP_SUFFIX}"
         os.makedirs(obj_all_frames_out_path, exist_ok=True)
 
     scenegraph_color_cache = {}
@@ -681,7 +678,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         if cfg.periodically_save_pcd and (counter % cfg.periodically_save_pcd_interval == 0):
             # save the pointcloud
             save_pointcloud(
-                exp_suffix=cfg.exp_suffix,
+                exp_suffix=EXP_SUFFIX,
                 exp_out_path=exp_out_path,
                 cfg=cfg,
                 objects=objects,
@@ -768,7 +765,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
 
     # Save the pointcloud
     save_pointcloud(
-        exp_suffix=cfg.exp_suffix,
+        exp_suffix=EXP_SUFFIX,
         exp_out_path=exp_out_path,
         cfg=cfg,
         objects=objects,
@@ -779,13 +776,13 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     )
 
     save_obj_json(
-        exp_suffix=cfg.exp_suffix,
+        exp_suffix=EXP_SUFFIX,
         exp_out_path=exp_out_path,
         objects=objects
     )
 
     save_edge_json(
-        exp_suffix=cfg.exp_suffix,
+        exp_suffix=EXP_SUFFIX,
         exp_out_path=exp_out_path,
         objects=objects,
         edges=map_edges
@@ -793,13 +790,13 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
 
     if cfg.save_scenegraph_full:
         full_scenegraph = load_scene_graph(
-            exp_out_path / f"obj_json_{cfg.exp_suffix}.json",
-            exp_out_path / f"edge_json_{cfg.exp_suffix}.json",
+            exp_out_path / f"obj_json_{EXP_SUFFIX}.json",
+            exp_out_path / f"edge_json_{EXP_SUFFIX}.json",
         )
         full_scenegraph_path = render_full_scenegraph(
             full_scenegraph,
             exp_out_path / "scenegraph_full.png",
-            title=f"{cfg.scene_id} / {cfg.exp_suffix}",
+            title=f"{cfg.scene_id} / {EXP_SUFFIX}",
         )
         print(f"Saved full scene graph to {full_scenegraph_path} version: {VERSION_TEXT}")
 
