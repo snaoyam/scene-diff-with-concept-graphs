@@ -537,7 +537,7 @@ class _VisibilityCache:
 
 
 def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: FrameView = None,
-                             visibility: "_VisibilityCache" = None) -> dict:
+                             visibility: "_VisibilityCache" = None, det_eroded_idx=None) -> dict:
     """
     Run the point-overlap gate for one (detection, existing object) pair that already
     passed the bbox gate. Returns the debug record; `merged` is filled in by the caller
@@ -561,7 +561,10 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
     tau -- so points nearest the detection's own boundary, which is exactly where a
     touching-but-different object's points are most likely to land within tau (the
     contact-line/band leak -- see the module docstring), never enter the correspondence
-    search at all.
+    search at all. This depends only on `det`/`view`/`params`, not `obj`, so a caller
+    evaluating the same detection against many candidate objects should compute it once
+    and pass it in as `det_eroded_idx` rather than paying for cv2.erode + reprojection
+    again per candidate; left as None here only for standalone/direct callers.
 
     `gate_class` on a passing record says which direction earned the pass; the caller uses
     it to apply "merge every strong match, but only the closest weak one".
@@ -586,7 +589,8 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
         record["reason"] = REASON_TOO_FEW_POINTS
         return record
 
-    det_eroded_idx = _eroded_mask_subset(det, det_pcd, view, params)
+    if det_eroded_idx is None:
+        det_eroded_idx = _eroded_mask_subset(det, det_pcd, view, params)
 
     strong_overlap = _directional_overlap(det_pcd, obj_pcd, params, src_subset=det_eroded_idx)[0]
     record["overlap_det_to_obj"] = strong_overlap
@@ -712,10 +716,16 @@ def fuse_detections_geometry_only(
         lo_d, hi_d = _aabb(det['pcd'])
         bbox_pass = _bbox_gate_vector(lo_d, hi_d, los, his, params.bbox_margin)
 
+        # Depends only on this detection's own mask/depth, not on any candidate object,
+        # so it's computed once per detection rather than once per (detection, candidate)
+        # pair -- see evaluate_detection_gates' docstring.
+        det_eroded_idx = _eroded_mask_subset(det, det['pcd'], view, params)
+
         records = []
         strong_ids, weak_ids = [], []
         for obj_idx in np.nonzero(bbox_pass)[0]:
-            record = evaluate_detection_gates(det, obj_list[obj_idx], params, view, visibility)
+            record = evaluate_detection_gates(
+                det, obj_list[obj_idx], params, view, visibility, det_eroded_idx=det_eroded_idx)
             # obj_idx is this object's position in the live list, which merges and
             # deletions keep shifting -- useless for following one node across frames.
             # curr_obj_num is stable and is what fused_masks/ prints on its badges, so a
