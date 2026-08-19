@@ -562,6 +562,110 @@ def vis_result_fast(
                 )
     return annotated_image, labels
 
+def _distinct_bgr_colors(n):
+    """n visually separated BGR colors, evenly spaced around the hue circle."""
+    if n == 0:
+        return np.zeros((0, 3), np.uint8)
+    hues = (np.arange(n) * (180.0 / max(n, 1))).astype(np.uint8)
+    hsv = np.stack([hues, np.full(n, 220, np.uint8), np.full(n, 255, np.uint8)], axis=1)
+    return cv2.cvtColor(hsv.reshape(1, n, 3), cv2.COLOR_HSV2BGR).reshape(n, 3)
+
+
+def _place_label(anchor_xy, size_wh, taken, bounds_wh):
+    """
+    Nudge a label box off any already-placed one so no two labels cover each other.
+    Tries the anchor first, then alternating offsets above/below it. Returns top-left.
+    """
+    (cx, cy), (w, h) = anchor_xy, size_wh
+    max_w, max_h = bounds_wh
+    for step in range(0, 14):
+        for direction in ((1, -1) if step else (1,)):
+            y = cy + direction * step * (h + 6)
+            x = int(np.clip(cx - w / 2, 2, max_w - w - 2))
+            y = int(np.clip(y - h / 2, 2, max_h - h - 2))
+            box = (x, y, x + w, y + h)
+            if not any(box[0] < t[2] and t[0] < box[2] and box[1] < t[3] and t[1] < box[3]
+                       for t in taken):
+                return box
+    return (int(np.clip(cx - w / 2, 2, max_w - w - 2)),
+            int(np.clip(cy - h / 2, 2, max_h - h - 2)),
+            0, 0)
+
+
+def vis_numbered_masks(image_rgb, masks, labels, save_path, ids=None, colors=None, opacity=0.35):
+    """
+    Debug overlay for naming one specific object in a frame by eye: every mask gets a
+    translucent fill, a solid outline in the same color, and a "#<index> <label>" badge.
+
+    Three things it deliberately does, because the point is to judge what the detector
+    missed against the actual photo:
+      - the fill is translucent and the outline solid, so the underlying image stays
+        readable and mask boundaries stay exact;
+      - badges are pushed apart when they would overlap, so a small object's label is
+        never hidden under the label of the large object it sits on -- which is the
+        case this view exists for;
+      - no bounding boxes, since overlapping boxes obscure which fill owns which label.
+
+    `ids` and `colors` are what separate a per-frame view from a per-object one:
+      - both None (default): number and color come from the mask's position in `masks`.
+        That is per-frame and renumbered every frame -- right for detected_masks/ and
+        filtered_masks/, which show one frame's detections, and for filtered_masks/ the
+        number is the mask_idx the fusion debug log records.
+      - given: the caller's own stable object ids and colors (fused_masks/ passes
+        curr_obj_num and a palette fixed over the whole final object list), so one
+        object keeps one number and one color in every frame it appears in.
+
+    Color has to come from the caller rather than being derived from `ids` here: object
+    ids are sparse (0, 1, 2, 4, 27, 30, ...), and hashing sparse ids onto the hue circle
+    collapses unrelated objects onto near-identical colors. Ranking them over the known
+    object list spreads the hues evenly instead.
+
+    masks: (N, H, W) bool. labels: N pre-formatted strings. Saved even when N == 0, so
+    an empty overlay marks a frame where nothing survived.
+    """
+    ids = list(range(len(masks))) if ids is None else list(ids)
+    colors = _distinct_bgr_colors(len(masks)) if colors is None else np.asarray(colors)
+    assert len(ids) == len(masks), f"{len(ids)} ids for {len(masks)} masks"
+    assert len(colors) == len(masks), f"{len(colors)} colors for {len(masks)} masks"
+    image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    annotated = image_bgr.copy()
+
+    fill = image_bgr.copy()
+    for mask, color in zip(masks, colors):
+        fill[mask.astype(bool)] = color
+    cv2.addWeighted(fill, opacity, image_bgr, 1.0 - opacity, 0, dst=annotated)
+
+    for mask, color in zip(masks, colors):
+        contours, _ = cv2.findContours(
+            mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(annotated, contours, -1, tuple(int(c) for c in color), 2)
+
+    h_img, w_img = annotated.shape[:2]
+    taken = []
+    for idx, mask in enumerate(masks):
+        mask = mask.astype(bool)
+        if not mask.any():
+            continue
+        cy, cx = ndi.center_of_mass(mask)
+        text = f"#{ids[idx]} {labels[idx]}"
+        (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+        bw, bh = tw + 8, th + base + 6
+        x1, y1, x2, y2 = _place_label((cx, cy), (bw, bh), taken, (w_img, h_img))
+        taken.append((x1, y1, x1 + bw, y1 + bh))
+
+        # No background box -- a dark outline stroke behind the white fill keeps the
+        # text legible on light masks without occluding what's underneath.
+        text_org = (x1 + 4, y1 + th + 3)
+        cv2.putText(annotated, text, text_org,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(annotated, text, text_org,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(save_path), annotated)
+    return annotated
+
+
 def vis_result_slow_caption(image, masks, boxes_filt, pred_phrases, caption, text_prompt):
     '''
     Annotate the image with detection results, together with captions and text prompts.

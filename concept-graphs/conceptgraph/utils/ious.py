@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import torch
 
@@ -450,61 +451,56 @@ def compute_2d_box_contained_batch(bbox: torch.Tensor, thresh:float=0.95) -> tor
 
     return count
 
-def compute_2d_max_overlap_batch(xyxy: np.ndarray) -> np.ndarray:
+def remove_small_mask_components(mask: np.ndarray, min_component_ratio: float):
     '''
-    For each pair of 2D boxes (x1,y1,x2,y2), max(intersection/area_i, intersection/area_j)
-    -- robust to very differently-sized boxes (e.g. a small occlusion fragment fully
-    inside a much larger one still scores high, unlike plain IoU). Diagonal is zeroed.
+    Drop 8-connected components that are a negligible fraction of their own mask.
 
-    xyxy: (N, 4). Returns (N, N).
+    SAM sprinkles a mask with speckle wherever it is unsure of a boundary -- e.g. a
+    blanket draped over a sofa, where a single sofa mask came out as 69-83 connected
+    components. Those specks backproject into 3D as points scattered across whatever
+    object is actually there, contaminating that node.
+
+    The cut is on the fraction of the mask, not an absolute pixel count, because speckle
+    is a few pixels regardless of how big the object is: measured over one scan, speckle
+    components were 0.009-0.031% of their mask while components from genuine occlusion
+    splits were 2.0% and up -- a 64x gap, against only 4.6x on the absolute-pixel axis.
+
+    The largest component is never dropped, whatever the ratio says, so a small but valid
+    detection can't be emptied out.
+
+    Args:
+        mask: (N, H, W), nonzero = foreground. Returned with the same dtype.
+        min_component_ratio: drop components smaller than this fraction of their mask's
+            total area. <= 0 disables and returns the input unchanged.
+
+    Returns:
+        (cleaned mask (N, H, W), components removed, pixels removed)
     '''
-    areas = (xyxy[:, 2] - xyxy[:, 0]) * (xyxy[:, 3] - xyxy[:, 1])
-    lt = np.maximum(xyxy[:, None, :2], xyxy[None, :, :2])
-    rb = np.minimum(xyxy[:, None, 2:], xyxy[None, :, 2:])
-    inter = (rb - lt).clip(min=0)
-    inter_areas = inter[:, :, 0] * inter[:, :, 1]
-    overlap = np.maximum(inter_areas / areas[:, None], inter_areas / areas[None, :])
-    np.fill_diagonal(overlap, 0)
-    return overlap
+    if min_component_ratio <= 0 or len(mask) == 0:
+        return mask, 0, 0
 
+    # Zero out removed pixels in place of the caller's own dtype rather than returning a
+    # bool array: SAM hands back float masks, and whether those are 0/1 or raw logits is
+    # its business, not this function's. Casting here would turn every negative logit
+    # True. Labeling uses > 0, which is the threshold either encoding already implies.
+    cleaned = np.asarray(mask).copy()
+    n_removed = n_pixels = 0
+    for i in range(len(cleaned)):
+        n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            (cleaned[i] > 0).astype(np.uint8), connectivity=8)
+        if n_labels <= 2:  # background + at most one component
+            continue
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        keep_largest = 1 + int(np.argmax(areas))
+        threshold = areas.sum() * min_component_ratio
+        for label in range(1, n_labels):
+            if label == keep_largest or stats[label, cv2.CC_STAT_AREA] >= threshold:
+                continue
+            cleaned[i][labels == label] = 0
+            n_removed += 1
+            n_pixels += int(stats[label, cv2.CC_STAT_AREA])
 
-def group_same_object_detections(overlap, clip_feats, dino_feats, overlap_thresh, clip_sim_thresh, dino_sim_thresh):
-    '''
-    Groups detections that likely show the same physical object under different
-    class labels (e.g. an open-vocab detector proposing both "cup" and "mug" for
-    one object) or split into fragments by occlusion, instead of relying on class-
-    label identity. Union-find over pairs where overlap[i,j] >= overlap_thresh AND
-    clip_sim[i,j] >= clip_sim_thresh AND dino_sim[i,j] >= dino_sim_thresh, so 3+
-    mutually-linked detections merge transitively into one group. CLIP (semantic
-    identity) is the primary signal; DINOv3 (shape-sensitive) is secondary, so two
-    visually-similar but differently-shaped objects (e.g. two different cups) don't
-    get merged just because CLIP thinks they match.
-
-    clip_feats, dino_feats: (N, D), expected L2-normalized.
-    Returns: list of index-groups, covering every detection exactly once.
-    '''
-    n = overlap.shape[0]
-    clip_sim = clip_feats @ clip_feats.T
-    dino_sim = dino_feats @ dino_feats.T
-
-    parent = list(range(n))
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            if overlap[i, j] >= overlap_thresh and clip_sim[i, j] >= clip_sim_thresh and dino_sim[i, j] >= dino_sim_thresh:
-                ri, rj = find(i), find(j)
-                if ri != rj:
-                    parent[ri] = rj
-
-    groups_by_root = {}
-    for i in range(n):
-        groups_by_root.setdefault(find(i), []).append(i)
-    return list(groups_by_root.values())
+    return cleaned, n_removed, n_pixels
 
 
 def mask_subtract_contained(xyxy: np.ndarray, mask: np.ndarray, th1=0.8, th2=0.7):

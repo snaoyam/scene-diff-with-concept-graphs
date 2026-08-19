@@ -62,18 +62,46 @@ contain_mismatch_penalty: 0.5
 
 # Selection criteria on the 2D masks
 mask_area_threshold: 25 # mask with pixel area less than this will be skipped
-mask_conf_threshold: 0.25 # mask with lower confidence score will be skipped
+mask_conf_threshold: 0.10 # mask with lower confidence score will be skipped
 max_bbox_area_ratio: null # boxes with larger areas than this will be skipped
 
-# Merge same-physical-object detections that got different class labels
-# (e.g. YOLO-World proposing both "cup" and "mug" for one object) instead of
-# relying on class-label identity. CLIP is primary (semantic match); DINOv3
-# is secondary/auxiliary (shape-sensitive, so differently-shaped objects that
-# just look visually similar in color/texture -- e.g. two different cups --
-# aren't merged just because CLIP thinks they match).
-dedup_overlap_thresh: 0.3
-dedup_clip_sim_thresh: 0.75
-dedup_dino_sim_thresh: 0.75
+# SAM sprinkles speckle across a mask wherever it is unsure of a boundary -- e.g. a
+# blanket draped over a sofa, where one sofa mask came out as 69-83 connected components.
+# Those specks backproject into 3D as points scattered over whatever object is really
+# there. Applied right after SAM (see remove_small_mask_components in utils/ious.py), so
+# everything downstream, including the saved detections, works off the cleaned masks.
+# Components smaller than this fraction of their own mask's area are dropped; 0 disables.
+# The cut is relative, not an absolute pixel count, because speckle is a few pixels
+# whatever the object's size: measured over one scan, speckle components were
+# 0.009-0.031% of their mask while genuine occlusion splits were 2.0% and up -- a 64x
+# gap, against only 4.6x on the absolute-pixel axis. The largest component is always kept.
+mask_min_component_ratio: 0.03
+
+# One object routinely picks up several near-identical masks under different labels:
+# an open-vocab detector scores every vocabulary word against the same region, and
+# YOLO's own NMS (agnostic_nms=False) only dedupes within a class. SAM, handed two
+# nearly-identical boxes, returns the *identical* mask. Keep the highest-confidence one
+# of any group whose masks reach this IoU; 0 disables.
+# Measured over one scan: 96 pairs at an IoU of exactly 1.000 (sofa/couch,
+# pillow/cushion, tote bag/shoe) and the next-highest pair at 0.745 -- nothing in
+# between, so this threshold is not delicate. An earlier version of this stage keyed off
+# CLIP+DINO similarity and regrouped frame to frame because those sat right on their
+# threshold; mask IoU does not have that problem.
+dedup_mask_iou_thresh: 0.9
+
+# Confidence floor for taking part in mask_subtract_contained, which runs BEFORE
+# filter_gobs so that detections too weak to become objects still carve their pixels out
+# of whatever mask encloses them. This is a different question from mask_conf_threshold:
+# that one asks "is this its own object?", this one asks "is something there at all?".
+# Running the subtraction after the filter conflated the two -- a blanket detected at
+# 0.178 got dropped, nothing carved it out of the sofa mask, and the sofa detection
+# carried the blanket's pixels into 3D (dropped detections covered 13-53% of the
+# surviving sofa mask, measured per frame).
+# 0.0 lets everything YOLO emitted (predict conf=0.1) carve. Raising it means fewer
+# spurious detections punching holes in real masks, at the cost of more host
+# contamination -- and a hole is refilled by other frames while contamination is
+# permanent, so erring low is the cheaper mistake.
+mask_subtract_min_conf: 0.0
 
 # DINO appearance is computed as a whole-frame dense feature map (one DINOv3
 # forward pass per frame), then averaged per-object over its mask -- eroded by
@@ -87,6 +115,82 @@ min_points_threshold: 16 # projected and sampled pcd with less points will be sk
 merge_overlap_thresh: 0.7      # -1 means do not perform the merge_overlap_objects()
 merge_visual_sim_thresh: 0.7   # Merge only if the visual similarity is larger
 merge_text_sim_thresh: 0.7     # Merge only if the text cosine sim is larger
+
+# Same-scan object fusion mode -- how a new detection is associated with existing
+# map objects (see slam/geometric_fusion.py).
+#   "geometry_only": 3D bbox gate -> association gate (strong/weak, see
+#                    fusion_association_gate_mode) -> surface normal consistency gate,
+#                    then merge every STRONG match (so a new observation can bridge nodes
+#                    an earlier frame split apart) plus the single closest weak one.
+#                    No periodic merge_objects(); a single global consolidation runs
+#                    after the last frame instead. clip_ft/dino_ft/text_ft are never
+#                    consulted for the fusion decision -- they're still extracted and
+#                    stored for the before/after graph matching.
+#   "appearance":    the original spatial_sim + CLIP visual_sim (sim_sum) association
+#                    plus the merge_interval-driven merge_objects() above.
+object_fusion_mode: geometry_only
+
+fusion_bbox_margin: 0.02               # AABB candidate slack [m]; boxes within this distance
+                                        # of each other count as overlapping, absorbing RGB-D
+                                        # and pose noise. Candidate filtering only -- never a
+                                        # merge criterion on its own.
+fusion_point_overlap_thresh: 0.70      # gate on max(strong, weak).
+                                        #   strong = how much of the detection this object explains;
+                                        #            fails alone when a detection reveals surface the
+                                        #            object has not accumulated yet (new viewpoint).
+                                        #   weak   = how much of the object this detection covers,
+                                        #            restricted to what this frame's camera should have
+                                        #            seen (raw, unrestricted, it is biased low by partial
+                                        #            masks and by whatever is not observable from here).
+                                        # This same value also decides gate_class, and so the merge
+                                        # policy: matches at or above it on the strong direction ALL
+                                        # merge (rejoining a node an earlier frame split), while weak-only
+                                        # matches are a contest that just the closest one wins -- a host
+                                        # detection encloses every object resting on it, so merging all
+                                        # of them would collapse a sofa and its contents into one node.
+                                        # Also reused as the object-object threshold in the post-scan
+                                        # consolidation, where there is no camera and the criterion is
+                                        # max(A->B, B->A).
+fusion_point_distance_factor: 1.5      # tau = downsample_voxel_size * this
+
+fusion_visibility_depth_tolerance: 0.05 # z-buffer slack [m] for the occlusion test that builds O_vis:
+                                        # an object point counts as visible when its camera-frame z is
+                                        # <= the frame's measured depth + this. Absorbs pose drift and
+                                        # surface slant; pixels with no depth reading are never counted.
+fusion_min_visible_points: 16          # fewer visible object points than this carries no evidence, so
+                                        # the pair falls back to the 3D strong ratio alone
+
+# How BOTH association directions are measured.
+#   projection -- intersect the detection's 2D mask with the node's projected footprint once, then
+#                 read strong and weak off it by dividing by |mask(D)| and |footprint(O)|.
+#   point_3d   -- the previous nearest-neighbour ratios in 3D (fraction of one cloud within tau of
+#                 the other), kept so a run can be compared against the old behaviour.
+# 3D leaks sideways, because "some point lies within tau" is much weaker evidence than pixel
+# containment. Measured on living_room_17: the weak direction scored 0.28-0.49 for the sofa against
+# a handbag resting on it in every frame, and 0.90 once the frame border cropped the bag down to its
+# contact band -- which destroyed that node; on screen the same comparisons give 0.00-0.01 while the
+# bag's own mask still scores 0.89-0.99. The strong direction leaks the same way but more mildly:
+# 20 merges scored 1.000 in 3D for small frame-clipped detections against the big sofa node, and
+# re-scoring 15 of them on screen put two below this threshold and most of the rest well under 1.0.
+fusion_association_gate_mode: projection
+
+# Closing radius for the projected footprint, as a multiple of one voxel's pixel footprint:
+#   radius[px] = this * fx * downsample_voxel_size / z   (median over the visible points)
+# Closing fills the gaps voxel downsampling leaves (a detection's own cloud covers ~3% of its own
+# mask) without moving the outer silhouette. Deriving the radius rather than fixing it in pixels
+# matters because the reconstruction's scale is normalized, not metric. Raising it fills more
+# interior holes but starts bleeding the silhouette outward onto whatever the object rests on.
+fusion_projection_close_factor: 1.0
+
+fusion_normal_radius_factor: 3.0       # normal estimation radius = downsample_voxel_size * this
+fusion_normal_angle_thresh_deg: 30.0   # a correspondence agrees when |n_D . n_O| >= cos(this)
+fusion_normal_consistency_thresh: 0.70 # required fraction of agreeing correspondences, counted
+                                        # over the tau-inlier correspondences only
+
+fusion_normal_max_nn: 30               # KDTreeSearchParamHybrid max_nn for estimate_normals
+fusion_min_points_for_gates: 4         # pairs with fewer points than this auto-reject
+fusion_global_consolidation_max_sweeps: 20  # safety cap on the post-scan merge-until-fixpoint loop
+fusion_debug_log: !!bool True          # write <exp_out_path>/fusion_debug/*.jsonl
 
 # SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
 # ScanNet-style RGB-D sequences by conceptgraph/dataset/scenediff_to_conceptgraph.py.
@@ -185,6 +289,21 @@ obj_min_detections: 1
 # (image + colored mask overlay | node/edge graph diagram) under
 # <exp_out_path>/scenegraph_viz/
 save_scenegraph_viz: !!bool True
+
+# Per-frame overlay of the LIVE fused map, under <exp_out_path>/fused_masks/. Written
+# progressively inside the frame loop (right after each frame's own matching/merging),
+# not after the whole scan finishes, so playing the frames in order shows objects
+# merging over time -- two masks/numbers becoming one -- instead of only the finished
+# result. Numbered by curr_obj_num (stable once an object exists, even across merges),
+# but colors are positional per frame like detected_masks/filtered_masks, not fixed
+# across frames. Detections that already fused into one node this frame are drawn as
+# one mask. An object with no fresh detection this frame (e.g. the detector missed it)
+# is not just dropped: it is still drawn, reprojected from its stored 3D point cloud,
+# whenever this frame's camera should still see it -- in-frustum, unoccluded (per the
+# frame's own depth map, using fusion_visibility_depth_tolerance), and with at least
+# fusion_min_visible_points surviving points. Its label is suffixed "-r" to mark
+# it as a geometric guess rather than an actual detection this frame.
+save_fused_masks: !!bool True
 
 # Whole-scene object graph (all persistent objects/edges in the final map,
 # not per-frame): saved as <exp_out_path>/scenegraph_full.png once mapping

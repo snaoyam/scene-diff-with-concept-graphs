@@ -673,7 +673,9 @@ def save_obj_json(exp_suffix, exp_out_path, objects):
     json_obj_list = {}
     for curr_idx, curr_obj in enumerate(objects):
         obj_key = f"object_{curr_idx + 1}"
-        bbox_extent = [round(val, 2) for val in curr_obj['bbox'].extent]  # Round values to 2 decimal places
+        curr_bbox = curr_obj['bbox']
+        bbox_extent_raw = curr_bbox.extent if hasattr(curr_bbox, 'extent') else curr_bbox.get_extent()
+        bbox_extent = [round(val, 2) for val in bbox_extent_raw]  # Round values to 2 decimal places
         bbox_center = [round(val, 2) for val in curr_obj['bbox'].center]  # Assuming `center` is an iterable like a list or tuple
         bbox_volume = round(bbox_extent[0] * bbox_extent[1] * bbox_extent[2], 2)  # Calculate volume and round to 2 decimal places
         

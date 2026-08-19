@@ -680,6 +680,20 @@ def filter_gobs(
     # for key in gobs.keys():
     #     print(key, type(gobs[key]), len(gobs[key]))
 
+    return slice_gobs(gobs, idx_to_keep)
+
+
+def slice_gobs(gobs, idx_to_keep):
+    '''
+    Keep only `idx_to_keep` across every per-detection array in gobs, at once.
+
+    Factored out because more than one stage now narrows a frame's detections, and every
+    one of gobs' parallel arrays has to be cut identically or masks stop lining up with
+    their boxes/features. The exemptions below are load-bearing, not incidental: 'classes'
+    is the frame's whole vocabulary rather than a per-detection array, and
+    'detection_class_labels' deliberately is NOT exempt -- exempting it misaligns edges
+    from objects.
+    '''
     for attribute in gobs.keys():
         if isinstance(gobs[attribute], str) or attribute == "classes":  # Captions
             continue
@@ -692,11 +706,57 @@ def filter_gobs(
             gobs[attribute] = gobs[attribute][idx_to_keep]
         else:
             raise NotImplementedError(f"Unhandled type {type(gobs[attribute])}")
-        
+
     filtered_captions = filter_captions(gobs['captions'], gobs['detection_class_labels'])
     gobs['captions'] = filtered_captions
 
     return gobs
+
+
+def dedup_gobs_by_mask_iou(gobs, iou_thresh):
+    '''
+    Where one object picked up several near-identical masks under different labels, keep
+    only the highest-confidence one.
+
+    An open-vocab detector scores every vocabulary word against the same region, so one
+    sofa gets a "sofa" box and a "couch" box, and YOLO's own NMS (agnostic_nms=False)
+    only dedupes within a class. SAM, prompted with two nearly-identical boxes, hands
+    back the *identical* mask: over one scan, 96 detection pairs had a mask IoU of exactly
+    1.000 -- sofa/couch, pillow/cushion, tote bag/shoe -- while the next-highest pair sat
+    at 0.745. Nothing lives in between, so the threshold is not delicate.
+
+    This looks only at mask geometry. An earlier version of this stage keyed off CLIP and
+    DINO similarity and grouped differently frame to frame because those similarities sat
+    right on their threshold; IoU here does not have that problem.
+
+    Returns (gobs, number of detections dropped).
+    '''
+    masks = gobs.get('mask')
+    if iou_thresh <= 0 or masks is None or len(masks) < 2:
+        return gobs, 0
+
+    masks = np.asarray(masks).astype(bool)
+    areas = masks.reshape(len(masks), -1).sum(axis=1)
+    # Highest confidence first, so the survivor of each duplicate group is the one the
+    # rest are compared against (and the label that reaches mapping).
+    order = np.argsort(-np.asarray(gobs['confidence']))
+
+    keep = []
+    for i in order:
+        is_duplicate = False
+        for k in keep:
+            intersection = int((masks[i] & masks[k]).sum())
+            union = int(areas[i] + areas[k] - intersection)
+            if union > 0 and intersection >= iou_thresh * union:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            keep.append(int(i))
+
+    n_dropped = len(masks) - len(keep)
+    if n_dropped == 0:
+        return gobs, 0
+    return slice_gobs(gobs, sorted(keep)), n_dropped
 
 
 def resize_gobs(gobs, image):
