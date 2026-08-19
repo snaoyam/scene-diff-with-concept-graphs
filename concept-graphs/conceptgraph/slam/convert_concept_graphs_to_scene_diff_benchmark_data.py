@@ -428,7 +428,7 @@ def build_object_masks(before_objs, after_objs, moved_groups, removed_idx, added
     hw = None
     next_id = 0
 
-    def add_entry(video_1_objs=(), video_2_objs=(), match_cost=None):
+    def add_entry(video_1_objs=(), video_2_objs=(), match_cost=None, confidence=None):
         nonlocal hw, next_id
         entry = {}
         for key, objs in (("video_1", video_1_objs), ("video_2", video_2_objs)):
@@ -438,6 +438,9 @@ def build_object_masks(before_objs, after_objs, moved_groups, removed_idx, added
             if match_cost is not None:
                 for v in frames.values():
                     v["cost"] = 1.0 / (1.0 + match_cost)
+            elif confidence is not None:
+                for v in frames.values():
+                    v["cost"] = confidence
             entry[key] = frames
             hw = hw or this_hw
         object_masks[next_id] = entry
@@ -449,10 +452,12 @@ def build_object_masks(before_objs, after_objs, moved_groups, removed_idx, added
                   match_cost=spatial_dist)
 
     for i in removed_idx:
-        add_entry(video_1_objs=[before_objs[i]])
+        add_entry(video_1_objs=[before_objs[i]],
+                  confidence=before_objs[i].get("recognition_confidence", 1.0))
 
     for j in added_idx:
-        add_entry(video_2_objs=[after_objs[j]])
+        add_entry(video_2_objs=[after_objs[j]],
+                  confidence=after_objs[j].get("recognition_confidence", 1.0))
 
     return object_masks, hw
 

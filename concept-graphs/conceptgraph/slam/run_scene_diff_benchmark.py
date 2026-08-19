@@ -167,6 +167,15 @@ def run_benchmark(pair_name: str, resample_rate: int):
             "(convert-concept-graphs-to-scene-diff-benchmark-data.sh) for this pair first."
         )
 
+    gt_path = VIDEO_DATA_ROOT / pair_name / "segments.pkl"
+    if not gt_path.exists():
+        raise FileNotFoundError(
+            f"{gt_path} not found -- evaluate_multiview.py silently skips scenes whose "
+            "GT segments.pkl is missing (try/except: continue in evaluate_all_scenes), "
+            "which produces a fake all-zero eval_result.txt instead of failing. Make sure "
+            "scene_diff/data/scenediff_benchmark is downloaded and SCENE_DIFF_ROOT points at it."
+        )
+
     result_dir = scene_root / "benchmark_result"
     result_dir.mkdir(parents=True, exist_ok=True)
     result_path = result_dir / "eval_result.txt"
