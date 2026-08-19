@@ -61,10 +61,22 @@ Do not include any additional information in your response.
 '''
 
 # For scene vocabulary discovery: enumerating all objects visible in a whole frame
+#
+# Restricted to easily-movable objects (see the "single ordinary person" test below)
+# because the discovered names become YOLO-World's detection vocabulary for the whole
+# scan: a name that gets in here gets a node in the graph, and large/fixed furniture
+# nodes are unreliable across two separate scans (reconstruction noise reads as a
+# spurious change) and prone to swallowing whatever smaller object sits on or against
+# them during fusion. Filtering at the vocabulary stage stops that class of object from
+# ever being detected at all, rather than only flagging it after the fact.
 system_prompt_frame_objects = '''
 You are an agent specializing in identifying objects in an image of an indoor scene.
 
-Your task is to list every distinct type of physical object visible in the image. Name each one using as few words as possible -- ideally 1-2 words, never more than 3 -- and use a short, generic category name (e.g. "lamp", "pillow", "mug"), not a proper noun or brand name. List each object type only once, even if multiple instances of it are visible. Do not include "wall", "floor", or "ceiling" unless they are visually distinctive (e.g. "painting" on the wall is fine, "wall" itself is not).
+Your task is to list every distinct type of physical object visible in the image that a single ordinary person could pick up, carry, or drag to a new spot as part of everyday life -- without tools, help, or disassembly. This includes things like "bottle", "pillow", "remote", "chair", "stool", "box", "towel", "rug", "bag", "book", "plant" -- ordinary items someone moves, replaces, or puts away routinely.
+
+Do NOT include large or fixed/built-in furniture and structural elements that people do not casually relocate, such as "sofa", "bed", "bathtub", "sink", "toilet", "countertop", "cabinet", "closet", "wall-mounted shelf", "mirror", "wall", "floor", "ceiling", "door", "window", "refrigerator", "washing machine", or "staircase". If you are unsure whether something is fixed or movable, leave it out.
+
+Name each object using as few words as possible -- ideally 1-2 words, never more than 3 -- and use a short, generic category name (e.g. "lamp", "pillow", "mug"), not a proper noun or brand name. List each object type only once, even if multiple instances of it are visible.
 
 Your response must be a JSON object with the format:
 {
@@ -73,12 +85,15 @@ Your response must be a JSON object with the format:
 '''
 
 # For scene vocabulary discovery: naming a single cropped object segment
+#
+# Same "easily movable" restriction as system_prompt_frame_objects above, and for the
+# same reason -- this crop-level pass is the other half of the same vocabulary.
 system_prompt_segment_name = '''
 You are an agent specializing in naming a single object shown in a cropped image.
 
-The image shows one segmented object, possibly with some surrounding context. Your task is to name this object using as few words as possible -- ideally 1-2 words, never more than 3. Use a short, generic category name (e.g. "coffee mug"), not a proper noun or brand name.
+The image shows one segmented object, possibly with some surrounding context. Name this object using as few words as possible -- ideally 1-2 words, never more than 3 -- but ONLY if it is something a single ordinary person could pick up, carry, or drag to a new spot as part of everyday life, without tools, help, or disassembly (e.g. "coffee mug", "chair", "towel"). Use a short, generic category name, not a proper noun or brand name.
 
-If the crop does not show a distinct physical object (e.g. it is a piece of wall, floor, texture, shadow, or empty space), return an empty string for the name.
+Return an empty string for the name if the crop does not show such a movable object. This includes a piece of wall, floor, texture, shadow, or empty space, AND large or fixed/built-in furniture and structural elements a person would not casually relocate -- e.g. sofa, bed, bathtub, sink, toilet, countertop, cabinet, closet, wall-mounted shelf, mirror, door, window, refrigerator, washing machine, staircase. If you are unsure whether the object is fixed or movable, return an empty string.
 
 Your response must be a JSON object with the format:
 {

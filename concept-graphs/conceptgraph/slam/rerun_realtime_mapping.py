@@ -92,7 +92,7 @@ from conceptgraph.utils.general_utils import get_vis_out_path, cfg_to_dict, chec
 from conceptgraph.utils.scenegraph_viz import render_frame_scenegraph
 from conceptgraph.utils.visualize_full_scenegraph import load_scene_graph, render_full_scenegraph
 
-VERSION_TEXT = "scenediff 벤치마크 개선 2"
+VERSION_TEXT = "vocab list 큰 물체 필터링"
 
 # Disable torch gradient computation
 torch.set_grad_enabled(False)
