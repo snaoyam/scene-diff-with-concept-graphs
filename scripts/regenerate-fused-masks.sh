@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Re-run steps 2+3 (convert + benchmark) for every pair in scene-pairs.sh, reusing each
-# pair's existing step-1 concept_graphs/{before,after} output instead of regenerating it.
-# For when only convert_concept_graphs_to_scene_diff_benchmark_data.py /
-# run_scene_diff_benchmark.py changed and outputs/*/benchmark_result/eval_result.txt
-# needs to be refreshed without re-running the (slow) ConceptGraph construction step.
+# Regenerate fused_masks/ visualizations for every pair in scene-pairs.sh, reusing each
+# pair's existing concept_graphs/{before,after} data instead of re-computing from scratch.
+# For when only vis.py / write_progressive_fused_mask() changed and the visualization
+# output needs to be refreshed without re-running the (slow) ConceptGraph construction step.
 #
-# Usage: ./scripts/run-2-and-3.sh
+# Usage: ./scripts/regenerate-fused-masks.sh
 
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,12 +18,10 @@ if [[ -d "$ISOLATED_RUN_DIR/venv" ]]; then
     echo "isolated code snapshot detected at $ISOLATED_RUN_DIR -- using it (run ./scripts/setup.sh to refresh)"
     export PATH="$ISOLATED_RUN_DIR/venv/bin:$PATH"
     export CONCEPT_GRAPHS_ROOT="${CONCEPT_GRAPHS_ROOT:-$ISOLATED_RUN_DIR/concept-graphs}"
-    export SCENE_DIFF_ROOT="${SCENE_DIFF_ROOT:-$ISOLATED_RUN_DIR/scene_diff}"
 fi
 
 source "$SCRIPT_DIR/scene-pairs.sh"
-source "$SCRIPT_DIR/convert-concept-graphs-to-scene-diff-benchmark-data.sh"
-source "$SCRIPT_DIR/run-scene-diff-benchmark.sh"
+source "$SCRIPT_DIR/construct-concept-graphs.sh"
 
 failed_scenes=()
 skipped_scenes=()
@@ -33,6 +30,7 @@ for scene_id in "${SCENE_PAIRS[@]}"; do
     scene_output_dir="$OUTPUT_ROOT/$scene_id"
     concept_graphs_dir="$scene_output_dir/concept_graphs"
 
+    # Check that step 1 (concept_graphs) output exists
     missing_step1=0
     for variant in before after; do
         if [[ ! -f "$concept_graphs_dir/$variant/exps/r_mapping_pilot/pcd_r_mapping_pilot.pkl.gz" ]]; then
@@ -45,29 +43,22 @@ for scene_id in "${SCENE_PAIRS[@]}"; do
         continue
     fi
 
-    # Regenerating regardless of what's already there -- that's the point of this script.
-    rm -rf "$scene_output_dir/benchmark_data" "$scene_output_dir/benchmark_result"
+    # Delete only fused_masks directories to force regeneration with new visualization code
+    rm -rf "$concept_graphs_dir/before/exps/r_mapping_pilot/fused_masks" \
+           "$concept_graphs_dir/after/exps/r_mapping_pilot/fused_masks"
 
     echo
-    echo "=== running [$scene_id] (steps 2+3 only) ==="
+    echo "=== running [$scene_id] (fused_masks regeneration only) ==="
 
     {
-        echo "=== [$scene_id] 2/3 convert-concept-graphs-to-scene-diff-benchmark-data ==="
-        if ! convert_concept_graphs_to_scene_diff_benchmark_data "$scene_id"; then
+        if ! construct_concept_graphs "$scene_id"; then
             echo "[$scene_id] failed"
             failed_scenes+=("$scene_id")
             continue
         fi
+    } > "$scene_output_dir/terminal-outputs-fused-masks-$timestamp.txt" 2>&1
 
-        echo "=== [$scene_id] 3/3 run-scene-diff-benchmark ==="
-        if ! run_scene_diff_benchmark "$scene_id"; then
-            echo "[$scene_id] failed"
-            failed_scenes+=("$scene_id")
-            continue
-        fi
-    } > "$scene_output_dir/terminal-outputs-$timestamp.txt" 2>&1
-
-    echo "[$scene_id] complete"
+    echo "[$scene_id] fused_masks regenerated"
     echo
 done
 
