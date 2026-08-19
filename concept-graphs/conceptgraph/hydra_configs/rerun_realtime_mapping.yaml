@@ -115,14 +115,25 @@ min_points_threshold: 16 # projected and sampled pcd with less points will be sk
 # consulted for the fusion decision -- they're still extracted and stored for the
 # before/after graph matching.
 #
-# A surface-normal-consistency gate used to run after the association gate (reject a
-# match whose tau-inlier correspondence points' normals disagree). Dropped: it was
-# blind to two flush, same-facing surfaces anyway (abs() treats opposite-facing normals
-# as agreeing, since estimate_normals leaves them unoriented), and it was actively
-# rejecting genuine matches between different faces of the same large object (e.g. a
-# cabinet's front and side panel have legitimately different local normals), fragmenting
-# large objects into one node per face. No replacement for the angled-surface-mismatch
-# protection it did also provide has been added back yet.
+# A surface-normal-consistency gate also used to run after the ONLINE per-frame
+# association gate above (evaluate_detection_gates). Dropped there: it was blind to two
+# flush, same-facing surfaces anyway (abs() treats opposite-facing normals as agreeing,
+# since estimate_normals leaves them unoriented), and it was actively rejecting genuine
+# matches between different faces of the same large object growing within one
+# continuous scan (e.g. a cabinet's front and side panel have legitimately different
+# local normals), fragmenting large objects into one node per face.
+#
+# It's still used in the POST-SCAN global consolidation sweep (evaluate_object_pair_gates),
+# where that reasoning doesn't transfer: this is a one-time pass over otherwise-unrelated
+# surviving objects, not a single object growing face by face, and max(A->B, B->A) alone
+# is specifically vulnerable there to a small object entirely resting against a larger,
+# differently-angled surface (measured on one scan: removing this gate roughly tripled
+# the rate of consolidation merges where one direction was ~1.0 and the other under 0.1 --
+# one side's whole point cloud swallowed by the other's). Normal consistency catches most
+# of those (genuinely different surface angles), though not the same-facing blind spot
+# above -- fusion_normal_*/fusion_normal_consistency_thresh below are shared by both call
+# sites (there's only one set of thresholds), but only evaluate_object_pair_gates reads
+# them now.
 
 fusion_bbox_margin: 0.02               # AABB candidate slack [m]; boxes within this distance
                                         # of each other count as overlapping, absorbing RGB-D
@@ -193,6 +204,14 @@ fusion_projection_close_factor: 1.0
 
 fusion_min_points_for_gates: 4         # pairs with fewer points than this auto-reject
 fusion_global_consolidation_max_sweeps: 20  # safety cap on the post-scan merge-until-fixpoint loop
+
+# evaluate_object_pair_gates (post-scan global consolidation) only -- see the comment
+# above fusion_bbox_margin.
+fusion_normal_radius_factor: 3.0       # normal estimation radius = downsample_voxel_size * this
+fusion_normal_angle_thresh_deg: 30.0   # a correspondence agrees when |n_A . n_B| >= cos(this)
+fusion_normal_consistency_thresh: 0.70 # required fraction of agreeing correspondences, counted
+                                        # over the tau-inlier correspondences only
+fusion_normal_max_nn: 30               # KDTreeSearchParamHybrid max_nn for estimate_normals
 
 # Seed-descended objects only (slam/utils.py's load_prior_scene_objects_as_seeds): once a
 # detection passes the spatial gate against the object's FULL geometry (seed + confirmed),

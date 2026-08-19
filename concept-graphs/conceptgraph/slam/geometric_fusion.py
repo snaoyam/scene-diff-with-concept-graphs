@@ -11,13 +11,14 @@ periodic CLIP-gated merge_objects()) with a pure-geometry cascade:
         -> association gate            max(strong, weak) >= thresh
         -> merge EVERY strong match, plus the single closest weak one
 
-(A surface-normal-consistency gate used to sit after the association gate. Dropped: it
-was blind to two flush, same-facing surfaces anyway -- see the abs()-because-unoriented
-note that used to be here -- and it was actively rejecting genuine matches between
-different faces of the same large object, e.g. a cabinet's front and side panel, whose
-local normals legitimately differ. That fragmented single large objects into one node
-per face. No replacement for the angled-surface-mismatch protection it did also
-provide has been added back yet.)
+(A surface-normal-consistency gate used to sit after the association gate here too.
+Dropped from THIS cascade specifically: it was blind to two flush, same-facing surfaces
+anyway -- see the abs()-because-unoriented note on _normal_consistency -- and it was
+actively rejecting genuine matches between different faces of the same large object
+growing within one continuous scan, e.g. a cabinet's front and side panel, whose local
+normals legitimately differ. That fragmented single large objects into one node per
+face. It's still used in evaluate_object_pair_gates' post-scan consolidation sweep,
+where that reasoning doesn't apply -- see that function's own docstring.)
 
 Both directions come from ONE screen-space intersection of the detection's 2D mask with
 the object's projected footprint, differing only in the denominator (ASSOCIATION_MODE_
@@ -96,11 +97,13 @@ stored by the mapping loop for the later before/after graph matching stage.
 '''
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
+import open3d as o3d
 import torch
 from scipy.spatial import cKDTree
 from tqdm import trange
@@ -121,6 +124,9 @@ REASON_POINT_OVERLAP_REJECT = "point_overlap_reject"
 # load_prior_scene_objects_as_seeds) didn't independently pass, and CLIP+DINO
 # similarity to the detection fell short too -- see evaluate_detection_gates.
 REASON_APPEARANCE_REJECT = "appearance_reject"
+# evaluate_object_pair_gates only (see its docstring for why online per-frame fusion
+# doesn't use this): the tau-inlier correspondence points' surface normals disagree.
+REASON_NORMAL_REJECT = "normal_reject"
 REASON_MERGE = "merge"
 REASON_DEFERRED = "deferred_to_next_sweep"
 # Passed both gates on the weak (containment) direction, but another weak candidate
@@ -146,6 +152,12 @@ class GeometryFusionParams:
     seed_semantic_sim_threshold: float  # CLIP+DINO similarity floor for a seed-descended
                                          # object whose confirmed-only geometry doesn't yet
                                          # independently pass the spatial gate on its own
+    # evaluate_object_pair_gates only -- see its docstring for why online per-frame
+    # fusion (evaluate_detection_gates) doesn't use these.
+    normal_radius: float                 # downsample_voxel_size * normal_radius_factor
+    normal_max_nn: int
+    normal_cos_thresh: float             # cos(normal_angle_thresh_deg)
+    normal_consistency_thresh: float
     max_sweeps: int
     # recognition-trust thresholds, applied by annotate_recognition_trust() after
     # compute_recognition_confidence() has populated the fields it reads. Both are
@@ -174,6 +186,10 @@ def geometry_fusion_params_from_cfg(cfg) -> GeometryFusionParams:
         association_gate_mode=str(cfg['fusion_association_gate_mode']),
         projection_close_factor=float(cfg['fusion_projection_close_factor']),
         seed_semantic_sim_threshold=float(cfg['fusion_seed_semantic_sim_threshold']),
+        normal_radius=voxel * float(cfg['fusion_normal_radius_factor']),
+        normal_max_nn=int(cfg['fusion_normal_max_nn']),
+        normal_cos_thresh=math.cos(math.radians(float(cfg['fusion_normal_angle_thresh_deg']))),
+        normal_consistency_thresh=float(cfg['fusion_normal_consistency_thresh']),
         max_sweeps=int(cfg['fusion_global_consolidation_max_sweeps']),
         recognition_min_recognized_frames=int(cfg['recognition_min_recognized_frames']),
         recognition_min_confidence=float(cfg['recognition_min_confidence']),
@@ -280,6 +296,37 @@ def _bbox_gate_vector(lo_a, hi_a, los_b, his_b, margin):
     if len(los_b) == 0:
         return np.zeros(0, dtype=bool)
     return (((lo_a - margin) <= his_b) & ((hi_a + margin) >= los_b)).all(axis=1)
+
+
+def _normals(pcd, params: GeometryFusionParams) -> np.ndarray:
+    '''
+    Lazily estimated per-point normals, cached on the point cloud itself. Used by
+    evaluate_object_pair_gates only (see its docstring for why online per-frame fusion
+    doesn't use this).
+
+    Stored in pcd.normals rather than a new object-dict key on purpose:
+    merge_obj2_into_obj1 raises ValueError on unhandled object keys, and open3d
+    invalidates normals for us -- PointCloud.__iadd__ clears them when either side
+    lacks them, and pcd_denoise_dbscan rebuilds the cloud from points/colors only.
+    So a length mismatch is a reliable "stale" signal.
+    '''
+    if len(pcd.normals) != len(pcd.points):
+        pcd.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                radius=params.normal_radius, max_nn=params.normal_max_nn
+            )
+        )
+    return np.asarray(pcd.normals, dtype=np.float64)
+
+
+def _invalidate_normals(pcd):
+    '''
+    Force recomputation on next use (called right after any merge changes an object's
+    geometry, both online per-frame merges and global-consolidation ones -- even though
+    only the latter reads normals, a later consolidation sweep still needs them fresh
+    for whatever an online merge changed in between).
+    '''
+    pcd.normals = o3d.utility.Vector3dVector(np.zeros((0, 3)))
 
 
 @dataclass
@@ -455,6 +502,27 @@ def _directional_overlap(pcd_src, pcd_dst, params: GeometryFusionParams, src_sub
     dst_nn_local = nn_idx[local_inlier_idx]
     dst_nn_idx = dst_nn_local if dst_subset is None else np.asarray(dst_subset)[dst_nn_local]
     return float(len(local_inlier_idx)) / len(src_pts), src_inlier_idx, dst_nn_idx
+
+
+def _normal_consistency(pcd_src, pcd_dst, src_idx, dst_idx, params: GeometryFusionParams):
+    '''
+    Fraction of the tau-inlier correspondences whose surface normals agree:
+    |n_src . n_dst| >= cos(angle_thresh). Absolute value because estimate_normals
+    leaves normals unoriented (a surface seen from opposite sides flips sign).
+
+    evaluate_object_pair_gates only -- see its docstring for why online per-frame fusion
+    doesn't use this.
+
+    The denominator is the number of tau-inlier correspondences, not |src| -- points
+    with no neighbor inside tau aren't correspondences at all, so including them
+    would just re-apply the point-overlap gate a second time.
+    '''
+    if len(src_idx) == 0:
+        return 0.0
+    n_src = _normals(pcd_src, params)[src_idx]
+    n_dst = _normals(pcd_dst, params)[dst_idx]
+    cos_sim = np.abs(np.einsum('ij,ij->i', n_src, n_dst))
+    return float((cos_sim >= params.normal_cos_thresh).mean())
 
 
 def _eroded_mask_subset(det, det_pcd, view: "FrameView", params: GeometryFusionParams) -> np.ndarray:
@@ -794,13 +862,28 @@ def evaluate_object_pair_gates(obj_a, obj_b, params: GeometryFusionParams) -> di
     Same cascade for an (object, object) pair in the final consolidation, except the
     primary criterion is max(overlap_A->B, overlap_B->A): both sides can be partial
     views here, so requiring one specific direction would leave real splits unmerged.
+
+    Unlike evaluate_detection_gates, this ALSO runs a surface-normal-consistency gate
+    after the point-overlap one. Online per-frame fusion dropped that gate (see the
+    module docstring): it rejected genuine matches between different faces of the same
+    large object as it grew face by face within one continuous, already-anchored scan.
+    That reasoning doesn't transfer here -- this is a one-time, post-scan sweep over
+    otherwise-unrelated surviving objects, and max(A->B, B->A) alone is specifically
+    vulnerable to a small object entirely resting against a larger, differently-angled
+    surface (its whole point cloud can land within tau of the big object's surface,
+    scoring 1.0 in one direction, even though the two surfaces face very different
+    ways) -- normal consistency is the one signal here that can still catch that,
+    despite the known blind spot for two flush, SAME-facing surfaces (abs() treats
+    opposite-facing normals as agreeing, since estimate_normals leaves them unoriented).
     '''
     record = {
         "bbox_pass": True,
         "overlap_a_to_b": 0.0,
         "overlap_b_to_a": 0.0,
         "primary_overlap": 0.0,
+        "normal_consistency_ratio": 0.0,
         "point_gate_pass": False,
+        "normal_gate_pass": False,
         "merged": False,
         "reason": REASON_POINT_OVERLAP_REJECT,
     }
@@ -810,8 +893,8 @@ def evaluate_object_pair_gates(obj_a, obj_b, params: GeometryFusionParams) -> di
         record["reason"] = REASON_TOO_FEW_POINTS
         return record
 
-    overlap_a2b = _directional_overlap(pcd_a, pcd_b, params)[0]
-    overlap_b2a = _directional_overlap(pcd_b, pcd_a, params)[0]
+    overlap_a2b, a_idx, b_idx = _directional_overlap(pcd_a, pcd_b, params)
+    overlap_b2a, b_idx_r, a_idx_r = _directional_overlap(pcd_b, pcd_a, params)
     record["overlap_a_to_b"] = overlap_a2b
     record["overlap_b_to_a"] = overlap_b2a
     record["primary_overlap"] = max(overlap_a2b, overlap_b2a)
@@ -819,16 +902,29 @@ def evaluate_object_pair_gates(obj_a, obj_b, params: GeometryFusionParams) -> di
     if record["primary_overlap"] < params.point_overlap_thresh:
         return record
     record["point_gate_pass"] = True
+
+    if overlap_a2b >= overlap_b2a:
+        ratio = _normal_consistency(pcd_a, pcd_b, a_idx, b_idx, params)
+    else:
+        ratio = _normal_consistency(pcd_b, pcd_a, b_idx_r, a_idx_r, params)
+    record["normal_consistency_ratio"] = ratio
+    if ratio < params.normal_consistency_thresh:
+        record["reason"] = REASON_NORMAL_REJECT
+        return record
+
+    record["normal_gate_pass"] = True
     record["reason"] = REASON_MERGE
     return record
 
 
 def _merge_into(obj1, obj2, params: GeometryFusionParams, run_dbscan: bool):
     '''
-    merge_obj2_into_obj1 already handles pcd union + reprocess, n_points, and bbox
-    recomputation.
+    merge_obj2_into_obj1 (which already handles pcd union + reprocess, n_points, and
+    bbox recomputation) plus normal invalidation, since obj1's geometry just changed --
+    needed even for an online merge that itself never reads normals, since this same
+    object's current pcd may still be compared in evaluate_object_pair_gates later.
     '''
-    return merge_obj2_into_obj1(
+    merged = merge_obj2_into_obj1(
         obj1=obj1,
         obj2=obj2,
         downsample_voxel_size=params.downsample_voxel_size,
@@ -839,6 +935,8 @@ def _merge_into(obj1, obj2, params: GeometryFusionParams, run_dbscan: bool):
         device=params.device,
         run_dbscan=run_dbscan,
     )
+    _invalidate_normals(merged['pcd'])
+    return merged
 
 
 # ---------------------------------------------------------------- online fusion
@@ -1009,7 +1107,10 @@ def global_geometry_consolidation(
         dead = set()
         merged_any = False
         for (i, j, record) in evaluated:
-            if record["point_gate_pass"]:
+            # point_gate_pass alone isn't enough: evaluate_object_pair_gates can pass
+            # the spatial gate and still fail the normal-consistency one that follows
+            # it, in which case normal_gate_pass stays False.
+            if record["normal_gate_pass"]:
                 if i in frozen or j in frozen:
                     # One side's geometry already changed this sweep; re-evaluate it
                     # next sweep instead of trusting this now-stale measurement.

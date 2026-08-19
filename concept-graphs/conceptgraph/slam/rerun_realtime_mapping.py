@@ -489,7 +489,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             else np.zeros((0, *image_rgb.shape[:2]), dtype=bool),
             [all_labels[i] for i in real_indices],
             ids=[all_ids[i] for i in real_indices],
-            colors=colors[real_indices] if real_indices else colors,
+            colors=colors[real_indices] if real_indices else np.zeros((0, 3), colors.dtype),
         )
 
         composite = cv2.hconcat([left_panel, right_panel])
