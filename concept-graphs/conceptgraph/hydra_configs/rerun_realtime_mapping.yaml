@@ -16,8 +16,11 @@ data_root: /node_data/urp26su_dongwoo/concept-graphs-project/Datasets
 # concept_graphs/ (this script's obj_json, edge_json, pcd, detections/, ...),
 # benchmark_data/ (scripts/convert_concept_graphs_to_scene_diff_benchmark_data.py's
 # object_masks.pkl), and benchmark_result/ (scripts/run_scene_diff_benchmark.py's
-# eval_result.txt) all nested underneath it -- see scripts/output_paths.py, which reads
-# this same value for the latter two stages.
+# eval_result.txt) all nested underneath it. This default is used when nothing
+# overrides it; scripts/run.sh passes output_root=... explicitly (like scene_pair=...)
+# to every stage so all three agree on the same directory for a given run -- see
+# --output_root in convert_concept_graphs_to_scene_diff_benchmark_data.py and
+# run_scene_diff_benchmark.py, which forward it into their own hydra.compose() call.
 output_root: ${repo_root}/../outputs
 
 use_wandb: !!bool False

@@ -49,15 +49,19 @@ CHANGE_COLORS_BGR = {
 }
 
 
-def _load_output_root() -> Path:
+def _load_output_root(output_root_override: str | None = None) -> Path:
     """Reads output_root from rerun_realtime_mapping.yaml -- the single source of
     truth for where pipeline outputs live -- via hydra.compose(), the same
     hydra_configs/ this script's sibling rerun_realtime_mapping.py loads with
     @hydra.main(config_path="../hydra_configs/", config_name="rerun_realtime_mapping").
     hydra.initialize() resolves config_path relative to this file, so it's the same
-    "../hydra_configs" used there."""
+    "../hydra_configs" used there. output_root_override mirrors passing
+    output_root=... on rerun_realtime_mapping.py's CLI, so this stage agrees with
+    stage 1 on where a given run's outputs live even when that run didn't use the
+    yaml's default output_root."""
+    overrides = [f"output_root={output_root_override}"] if output_root_override else []
     with hydra.initialize(version_base=None, config_path="../hydra_configs"):
-        cfg = hydra.compose(config_name="rerun_realtime_mapping")
+        cfg = hydra.compose(config_name="rerun_realtime_mapping", overrides=overrides)
     return Path(cfg.output_root).resolve()
 
 
@@ -157,8 +161,8 @@ def _save_debug_visualizations(pair_name: str, benchmark_data_dir: Path, result_
     print(f"[{pair_name}] debug visualizations -> {debug_dir}")
 
 
-def run_benchmark(pair_name: str, resample_rate: int):
-    scene_root = _load_output_root() / pair_name
+def run_benchmark(pair_name: str, resample_rate: int, output_root: str | None = None):
+    scene_root = _load_output_root(output_root) / pair_name
     benchmark_data_dir = scene_root / "benchmark_data"
     pred_path = benchmark_data_dir / "object_masks.pkl"
     if not pred_path.exists():
@@ -213,11 +217,16 @@ def main():
     parser.add_argument("--pair_name", required=True)
     parser.add_argument("--resample_rate", type=int, default=10,
                          help="Must match the resample rate scenediff_to_conceptgraph.py used for this pair")
+    # Defaults to None so the yaml stays the single source of truth; pass one only to
+    # match a rerun_realtime_mapping.py run that itself overrode output_root=....
+    parser.add_argument("--output_root", default=None,
+                         help="Overrides the yaml's output_root, like output_root=... on rerun_realtime_mapping.py's CLI")
     args = parser.parse_args()
 
     run_benchmark(
         pair_name=args.pair_name,
         resample_rate=args.resample_rate,
+        output_root=args.output_root,
     )
 
 

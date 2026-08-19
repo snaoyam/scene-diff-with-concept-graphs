@@ -84,16 +84,20 @@ from pycocotools import mask as mask_utils
 AXIS_NAMES = ["X", "Y", "Z"]
 
 
-def _load_rerun_mapping_config() -> dict:
+def _load_rerun_mapping_config(output_root_override: str | None = None) -> dict:
     """Reads output_root from rerun_realtime_mapping.yaml -- the single source of
     truth for where pipeline outputs live -- via hydra.compose(), the same
     hydra_configs/ this script's sibling rerun_realtime_mapping.py loads with
     @hydra.main(config_path="../hydra_configs/", config_name="rerun_realtime_mapping").
     hydra.initialize() resolves config_path relative to this file, so it's the same
     "../hydra_configs" used there. exp_suffix itself is not read from the yaml --
-    it's pinned to general_utils.EXP_SUFFIX (see there for why)."""
+    it's pinned to general_utils.EXP_SUFFIX (see there for why). output_root_override
+    mirrors passing output_root=... on rerun_realtime_mapping.py's CLI, so this stage
+    agrees with stage 1 on where a given run's outputs live even when that run didn't
+    use the yaml's default output_root."""
+    overrides = [f"output_root={output_root_override}"] if output_root_override else []
     with hydra.initialize(version_base=None, config_path="../hydra_configs"):
-        cfg = hydra.compose(config_name="rerun_realtime_mapping")
+        cfg = hydra.compose(config_name="rerun_realtime_mapping", overrides=overrides)
     return {"output_root": Path(cfg.output_root).resolve(), "cfg": cfg}
 
 
@@ -701,9 +705,11 @@ def main():
                          help="3D centroid distance (meters) above which a matched pair counts as 'moved'")
     parser.add_argument("--sim_threshold", type=float, default=None,
                          help="Minimum semantic similarity (mean CLIP+DINO cosine over all frame pairs) to call two objects the same")
+    parser.add_argument("--output_root", default=None,
+                         help="Overrides the yaml's output_root, like output_root=... on rerun_realtime_mapping.py's CLI")
     args = parser.parse_args()
 
-    loaded = _load_rerun_mapping_config()
+    loaded = _load_rerun_mapping_config(args.output_root)
     cfg = loaded["cfg"]
     scene_root = loaded["output_root"] / args.pair_name
 

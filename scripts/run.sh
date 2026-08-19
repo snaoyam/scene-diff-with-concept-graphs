@@ -2,11 +2,21 @@
 
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/outputs"
 timestamp="$(date '+%Y-%m-%d_%H-%M-%S')"
 
 # ./scripts/setup.sh가 만들어둔 격리 스냅샷+venv가 있으면 자동으로 사용 (수동 activate/env var 불필요).
 # 다른 터미널에서 setup.sh를 한 번만 실행해도, 이후 어느 터미널에서 run.sh를 실행하든 적용된다.
+# ISOLATED_RUN=0으로 실행하면 격리 스냅샷이 있어도 무시하고 원본 환경에서 실행하며 outputs/에 쓴다.
+# 그 외(기본값)에는 격리 스냅샷을 쓰고 isolated-outputs/에 써서 outputs/와 절대 섞이지 않는다.
+# OUTPUT_ROOT는 scene_pair=...처럼 output_root=...로 매 파이썬 호출에 명시적으로 전달된다
+# (construct-concept-graphs.sh 등 참고) -- 3단계 모두 같은 값을 봐야 하므로 여기서만 정한다.
+ISOLATED_RUN="${ISOLATED_RUN:-1}"
+if [[ "$ISOLATED_RUN" == "0" ]]; then
+    OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/outputs-test"
+else
+    OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/isolated-outputs"
+fi
+
 ISOLATED_RUN_DIR="$SCRIPT_DIR/../.isolated-runs"
 if [[ -d "$ISOLATED_RUN_DIR/venv" ]]; then
     ISOLATED_RUN_DIR="$(cd "$ISOLATED_RUN_DIR" && pwd)"

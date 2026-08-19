@@ -9,11 +9,16 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONCEPT_GRAPHS_SLAM_DIR="$(cd "${CONCEPT_GRAPHS_ROOT:-$SCRIPT_DIR/../concept-graphs}/conceptgraph/slam" && pwd)"
+# run.sh sets/exports this; standalone invocation falls back to the yaml's own default
+# (rerun_realtime_mapping.yaml's output_root) by simply not passing an override.
+OUTPUT_ROOT="${OUTPUT_ROOT:-}"
 
 run_scene_diff_benchmark() {
     local pair_name="$1"
+    local output_root_arg=()
+    [[ -n "$OUTPUT_ROOT" ]] && output_root_arg=(--output_root "$OUTPUT_ROOT")
     python "$CONCEPT_GRAPHS_SLAM_DIR/run_scene_diff_benchmark.py" \
-        --pair_name "$pair_name"
+        --pair_name "$pair_name" "${output_root_arg[@]}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

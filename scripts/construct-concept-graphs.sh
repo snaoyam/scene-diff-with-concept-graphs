@@ -12,12 +12,17 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONCEPT_GRAPHS_DIR="$(cd "${CONCEPT_GRAPHS_ROOT:-$SCRIPT_DIR/../concept-graphs}" && pwd)"
+# run.sh sets/exports this; standalone invocation falls back to the yaml's own default
+# (rerun_realtime_mapping.yaml's output_root) by simply not passing an override.
+OUTPUT_ROOT="${OUTPUT_ROOT:-}"
 
 construct_concept_graphs() {
     local pair_name="$1"
+    local output_root_arg=()
+    [[ -n "$OUTPUT_ROOT" ]] && output_root_arg=("output_root=${OUTPUT_ROOT}")
     (cd "$CONCEPT_GRAPHS_DIR" && \
         PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" \
-        python conceptgraph/slam/rerun_realtime_mapping.py "scene_pair=${pair_name}")
+        python conceptgraph/slam/rerun_realtime_mapping.py "scene_pair=${pair_name}" "${output_root_arg[@]}")
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
