@@ -592,37 +592,11 @@ def _place_label(anchor_xy, size_wh, taken, bounds_wh):
             0, 0)
 
 
-def vis_numbered_masks(image_rgb, masks, labels, save_path, ids=None, colors=None, opacity=0.35):
-    """
-    Debug overlay for naming one specific object in a frame by eye: every mask gets a
-    translucent fill, a solid outline in the same color, and a "#<index> <label>" badge.
-
-    Three things it deliberately does, because the point is to judge what the detector
-    missed against the actual photo:
-      - the fill is translucent and the outline solid, so the underlying image stays
-        readable and mask boundaries stay exact;
-      - badges are pushed apart when they would overlap, so a small object's label is
-        never hidden under the label of the large object it sits on -- which is the
-        case this view exists for;
-      - no bounding boxes, since overlapping boxes obscure which fill owns which label.
-
-    `ids` and `colors` are what separate a per-frame view from a per-object one:
-      - both None (default): number and color come from the mask's position in `masks`.
-        That is per-frame and renumbered every frame -- right for detected_masks/ and
-        filtered_masks/, which show one frame's detections, and for filtered_masks/ the
-        number is the mask_idx the fusion debug log records.
-      - given: the caller's own stable object ids and colors (fused_masks/ passes
-        curr_obj_num and a palette fixed over the whole final object list), so one
-        object keeps one number and one color in every frame it appears in.
-
-    Color has to come from the caller rather than being derived from `ids` here: object
-    ids are sparse (0, 1, 2, 4, 27, 30, ...), and hashing sparse ids onto the hue circle
-    collapses unrelated objects onto near-identical colors. Ranking them over the known
-    object list spreads the hues evenly instead.
-
-    masks: (N, H, W) bool. labels: N pre-formatted strings. Saved even when N == 0, so
-    an empty overlay marks a frame where nothing survived.
-    """
+def _annotate_numbered_masks(image_rgb, masks, labels, ids=None, colors=None, opacity=0.35):
+    """Draws the mask fills/outlines/badges described in vis_numbered_masks' docstring
+    and returns the annotated BGR array, without touching disk. Split out so callers
+    that need multiple annotated panels (e.g. a side-by-side composite) before a single
+    combined imwrite can reuse this without vis_numbered_masks' own save."""
     ids = list(range(len(masks))) if ids is None else list(ids)
     colors = _distinct_bgr_colors(len(masks)) if colors is None else np.asarray(colors)
     assert len(ids) == len(masks), f"{len(ids)} ids for {len(masks)} masks"
@@ -661,6 +635,41 @@ def vis_numbered_masks(image_rgb, masks, labels, save_path, ids=None, colors=Non
         cv2.putText(annotated, text, text_org,
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
+    return annotated
+
+
+def vis_numbered_masks(image_rgb, masks, labels, save_path, ids=None, colors=None, opacity=0.35):
+    """
+    Debug overlay for naming one specific object in a frame by eye: every mask gets a
+    translucent fill, a solid outline in the same color, and a "#<index> <label>" badge.
+
+    Three things it deliberately does, because the point is to judge what the detector
+    missed against the actual photo:
+      - the fill is translucent and the outline solid, so the underlying image stays
+        readable and mask boundaries stay exact;
+      - badges are pushed apart when they would overlap, so a small object's label is
+        never hidden under the label of the large object it sits on -- which is the
+        case this view exists for;
+      - no bounding boxes, since overlapping boxes obscure which fill owns which label.
+
+    `ids` and `colors` are what separate a per-frame view from a per-object one:
+      - both None (default): number and color come from the mask's position in `masks`.
+        That is per-frame and renumbered every frame -- right for detected_masks/ and
+        filtered_masks/, which show one frame's detections, and for filtered_masks/ the
+        number is the mask_idx the fusion debug log records.
+      - given: the caller's own stable object ids and colors (fused_masks/ passes
+        curr_obj_num and a palette fixed over the whole final object list), so one
+        object keeps one number and one color in every frame it appears in.
+
+    Color has to come from the caller rather than being derived from `ids` here: object
+    ids are sparse (0, 1, 2, 4, 27, 30, ...), and hashing sparse ids onto the hue circle
+    collapses unrelated objects onto near-identical colors. Ranking them over the known
+    object list spreads the hues evenly instead.
+
+    masks: (N, H, W) bool. labels: N pre-formatted strings. Saved even when N == 0, so
+    an empty overlay marks a frame where nothing survived.
+    """
+    annotated = _annotate_numbered_masks(image_rgb, masks, labels, ids=ids, colors=colors, opacity=opacity)
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(save_path), annotated)
     return annotated

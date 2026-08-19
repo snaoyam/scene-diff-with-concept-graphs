@@ -42,7 +42,7 @@ SCENE_PAIRS=( "${SCENE_PAIRS_SELECT[@]}" "${FILTERED_SCENE_PAIRS[@]}" )
 # SCENE_PAIRS=("${SCENE_PAIRS[@]:0}")
 
 SUB_SCENE_PAIRS=()
-for offset in 0 1 2 3; do
+for offset in 2; do
     for (( i=offset; i<${#SCENE_PAIRS[@]}; i+=4 )); do
         SUB_SCENE_PAIRS+=("${SCENE_PAIRS[i]}")
     done

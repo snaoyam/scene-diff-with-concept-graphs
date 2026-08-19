@@ -676,7 +676,8 @@ def save_obj_json(exp_suffix, exp_out_path, objects):
         curr_bbox = curr_obj['bbox']
         bbox_extent_raw = curr_bbox.extent if hasattr(curr_bbox, 'extent') else curr_bbox.get_extent()
         bbox_extent = [round(val, 2) for val in bbox_extent_raw]  # Round values to 2 decimal places
-        bbox_center = [round(val, 2) for val in curr_obj['bbox'].center]  # Assuming `center` is an iterable like a list or tuple
+        bbox_center_raw = curr_bbox.center if hasattr(curr_bbox, 'center') else curr_bbox.get_center()
+        bbox_center = [round(val, 2) for val in bbox_center_raw]  # Assuming `center` is an iterable like a list or tuple
         bbox_volume = round(bbox_extent[0] * bbox_extent[1] * bbox_extent[2], 2)  # Calculate volume and round to 2 decimal places
         
         obj_dict = {

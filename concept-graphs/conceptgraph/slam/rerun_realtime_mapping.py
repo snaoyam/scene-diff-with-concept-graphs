@@ -53,6 +53,8 @@ from conceptgraph.utils.vis import (
     vis_result_for_vlm,
     vis_result_fast,
     vis_numbered_masks,
+    _annotate_numbered_masks,
+    _distinct_bgr_colors,
     save_video_detections
 )
 from conceptgraph.slam.slam_classes import MapEdgeMapping, MapObjectList
@@ -401,6 +403,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         # detector miss on an object that's still plainly in view doesn't make it
         # silently vanish from this debug view. Suffixed "-r" in the label so
         # it's visually distinguishable from a mask backed by an actual detection.
+        #
+        # Rendered as a side-by-side composite -- left panel real detections only,
+        # right panel real+reprojected together -- so the "-r" guesses' effect on the
+        # debug view is visible without occluding the ground-truth left panel.
         frame_objects = []
         for obj in objects:
             local_indices = [i for i, idx in enumerate(obj['image_idx']) if idx == frame_idx]
@@ -425,14 +431,31 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 'class_name': obj['class_name'] + "-r",
                 'mask': footprint,
             })
-        vis_numbered_masks(
-            image_rgb,
-            np.stack([o['mask'] for o in frame_objects]) if frame_objects
-            else np.zeros((0, *image_rgb.shape[:2]), dtype=bool),
-            [o['class_name'] for o in frame_objects],
-            (fused_masks_out_path / color_path.name).with_suffix(".jpg"),
-            ids=[o['obj_num'] for o in frame_objects],
+
+        colors = _distinct_bgr_colors(len(frame_objects))
+        real_indices = [i for i, o in enumerate(frame_objects) if not o['class_name'].endswith("-r")]
+
+        all_masks = (np.stack([o['mask'] for o in frame_objects]) if frame_objects
+                     else np.zeros((0, *image_rgb.shape[:2]), dtype=bool))
+        all_labels = [o['class_name'] for o in frame_objects]
+        all_ids = [o['obj_num'] for o in frame_objects]
+
+        right_panel = _annotate_numbered_masks(
+            image_rgb, all_masks, all_labels, ids=all_ids, colors=colors,
         )
+        left_panel = _annotate_numbered_masks(
+            image_rgb,
+            all_masks[real_indices] if real_indices
+            else np.zeros((0, *image_rgb.shape[:2]), dtype=bool),
+            [all_labels[i] for i in real_indices],
+            ids=[all_ids[i] for i in real_indices],
+            colors=colors[real_indices] if real_indices else colors,
+        )
+
+        composite = cv2.hconcat([left_panel, right_panel])
+        save_path = (fused_masks_out_path / color_path.name).with_suffix(".jpg")
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(save_path), composite)
 
     exit_early_flag = False
     counter = 0
