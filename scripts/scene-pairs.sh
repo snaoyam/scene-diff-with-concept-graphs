@@ -2,14 +2,14 @@ JSON_FILE="/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/
 
 SCENE_PAIRS=($(python -c "import json; d=json.load(open('$JSON_FILE')); print('\n'.join(d.get('varied', []) + d.get('kitchen', [])))" | sort))
 
-SCENE_PAIRS=(
+SCENE_PAIRS_SELECT=(
   living_room_17_living_room_18
   bathroom_1_bathroom_2
+  hallway_1_hallway_2
   airhockeytable_1_airhockeytable_2
   bedroom_1_bedroom_2
   gas_station_3_gas_station_4
   gym_9_gym_10
-  hallway_1_hallway_2
   kitchen_6_kitchen_7
   laundry_room_3_laundry_room_4
   lounge_17_lounge_18
@@ -25,11 +25,25 @@ SCENE_PAIRS=(
   table_1_table_2
 )
 
+declare -A REMOVE_MAP
+for item in "${SCENE_PAIRS_SELECT[@]}"; do
+  REMOVE_MAP["$item"]=1
+done
+
+FILTERED_SCENE_PAIRS=()
+for item in "${SCENE_PAIRS[@]}"; do
+  if [[ -z "${REMOVE_MAP[$item]}" ]]; then
+    FILTERED_SCENE_PAIRS+=("$item")
+  fi
+done
+
+SCENE_PAIRS=( "${SCENE_PAIRS_SELECT[@]}" "${FILTERED_SCENE_PAIRS[@]}" )
+
 # SCENE_PAIRS=("${SCENE_PAIRS[@]:0}")
 
 SUB_SCENE_PAIRS=()
-for offset in 2; do
-    for (( i=offset; i<${#SCENE_PAIRS[@]}; i+=3 )); do
+for offset in 0 1 2 3; do
+    for (( i=offset; i<${#SCENE_PAIRS[@]}; i+=4 )); do
         SUB_SCENE_PAIRS+=("${SCENE_PAIRS[i]}")
     done
 done

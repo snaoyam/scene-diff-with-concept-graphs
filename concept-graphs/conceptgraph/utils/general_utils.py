@@ -694,6 +694,10 @@ def save_obj_json(exp_suffix, exp_out_path, objects):
             "recognition_confidence": curr_obj.get('recognition_confidence'),
             "recognition_n_visible": curr_obj.get('recognition_n_visible'),
             "recognition_n_recognized": curr_obj.get('recognition_n_recognized'),
+            # Whether that evidence clears the configured thresholds. Untrusted objects
+            # are still written out in full -- only the before/after comparison treats
+            # them differently (see annotate_recognition_trust).
+            "recognition_trusted": curr_obj.get('recognition_trusted', True),
         }
         json_obj_list[obj_key] = obj_dict
         

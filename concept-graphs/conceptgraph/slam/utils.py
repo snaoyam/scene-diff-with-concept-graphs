@@ -203,7 +203,7 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     extend_attributes = ['image_idx', 'mask_idx', 'color_path', 'class_id', 'mask', 'xyxy', 'conf', 'contain_number', 'captions']
     add_attributes = ['num_detections', 'num_obj_in_class']
     skip_attributes = ['id', 'class_name', 'is_background', 'new_counter', 'curr_obj_num', 'inst_color']  # 'inst_color' just keeps obj1's
-    custom_handled = ['pcd', 'bbox', 'clip_ft', 'dino_ft', 'text_ft', 'n_points']
+    custom_handled = ['pcd', 'bbox', 'clip_ft', 'dino_ft', 'clip_ft_mean', 'dino_ft_mean', 'text_ft', 'n_points']
 
     # Check for unhandled keys and throw an error if there are
     all_handled_keys = set(extend_attributes + add_attributes + skip_attributes + custom_handled)
@@ -247,6 +247,20 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     # Merge and normalize 'dino_ft'
     obj1['dino_ft'] = (obj1['dino_ft'] * n_obj1_det + obj2['dino_ft'] * n_obj2_det) / (n_obj1_det + n_obj2_det)
     obj1['dino_ft'] = F.normalize(obj1['dino_ft'], dim=0)
+
+    # The same running mean over the per-detection features, but deliberately NOT
+    # renormalized. Every per-frame CLIP/DINO feature arrives L2-normalized, so this
+    # recurrence holds the plain arithmetic mean of unit vectors -- and for unit vectors
+    #     mean over all N*M frame pairs of cos(b_i, a_j) == dot(mean(b), mean(a))
+    # exactly. That identity is what lets the before/after benchmark comparison score a
+    # pair of objects over every frame pair with one dot product instead of storing
+    # per-frame features (see convert_concept_graphs_to_scene_diff_benchmark_data.py).
+    # The magnitude these vectors lose by renormalizing is precisely the object's
+    # cross-frame appearance consistency, which is the part that identity needs; the
+    # 'clip_ft'/'dino_ft' above stay normalized because everything else expects that.
+    for attr in ('clip_ft_mean', 'dino_ft_mean'):
+        if attr in obj1 and attr in obj2:
+            obj1[attr] = (obj1[attr] * n_obj1_det + obj2[attr] * n_obj2_det) / (n_obj1_det + n_obj2_det)
 
     # merge text_ft
     # obj2['text_ft'] = to_tensor(obj2['text_ft'], device)
@@ -837,6 +851,10 @@ def make_detection_list_from_pcd_and_gobs(
             'bbox': obj_pcds_and_bboxes[mask_idx]['bbox'],
             'clip_ft': to_tensor(gobs['image_feats'][mask_idx]),
             'dino_ft': to_tensor(gobs['dino_feats'][mask_idx]),
+            # Same values, but these two are averaged WITHOUT renormalizing as detections
+            # merge -- see merge_obj2_into_obj1 for why that difference matters.
+            'clip_ft_mean': to_tensor(gobs['image_feats'][mask_idx]),
+            'dino_ft_mean': to_tensor(gobs['dino_feats'][mask_idx]),
             # 'text_ft': to_tensor(gobs['text_feats'][mask_idx]),
             'num_obj_in_class': num_obj_in_class,
             'curr_obj_num': tracker.total_object_count,

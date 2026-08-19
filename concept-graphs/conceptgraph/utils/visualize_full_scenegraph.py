@@ -23,7 +23,11 @@ def load_scene_graph(obj_json_path, edge_json_path):
 
     graph = nx.Graph()
     for obj in objects.values():
-        graph.add_node(obj["id"], tag=obj["object_tag"], caption=obj.get("object_caption", ""))
+        graph.add_node(obj["id"], tag=obj["object_tag"], caption=obj.get("object_caption", ""),
+                       # Objects whose recognition evidence didn't clear the thresholds are
+                       # still full members of the graph -- render_full_scenegraph just
+                       # outlines them differently. Absent (older obj_json) means trusted.
+                       trusted=bool(obj.get("recognition_trusted", True)))
     for edge in edges.values():
         obj1_id, obj2_id = edge["object_1_id"], edge["object_2_id"]
         if graph.has_edge(obj1_id, obj2_id):
@@ -116,6 +120,11 @@ def render_full_scenegraph(graph, save_path, title=None, seed=0):
 
     color_cache = {}
     node_colors = [get_object_color(n, color_cache) for n in graph.nodes()]
+    # Weakly-recognized objects stay on the graph at full size and colour; only their
+    # outline goes pale, so they read as "present but not something to assert a change
+    # from" without disappearing (see annotate_recognition_trust).
+    node_edge_colors = ["black" if graph.nodes[n].get("trusted", True) else "#cccccc"
+                        for n in graph.nodes()]
     node_labels = {n: f"#{n}\n{graph.nodes[n]['tag']}" for n in graph.nodes()}
     edge_widths = [1 + 0.4 * graph.edges[e]["num_detections"] for e in graph.edges()]
     edge_labels = {e: graph.edges[e]["relationship"] for e in graph.edges()}
@@ -127,7 +136,7 @@ def render_full_scenegraph(graph, save_path, title=None, seed=0):
     nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels, ax=ax, font_size=7,
                                   bbox=dict(facecolor="white", alpha=0.75, edgecolor="none", pad=0.5))
     nx.draw_networkx_nodes(graph, pos, ax=ax, node_color=node_colors, node_size=1000,
-                            edgecolors="black", linewidths=1)
+                            edgecolors=node_edge_colors, linewidths=1)
     nx.draw_networkx_labels(graph, pos, labels=node_labels, ax=ax, font_size=7)
 
     n_isolated = sum(1 for n in graph.nodes() if graph.degree(n) == 0)

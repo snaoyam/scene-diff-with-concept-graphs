@@ -113,10 +113,11 @@ class GeometryFusionParams:
     association_gate_mode: str          # ASSOCIATION_MODE_PROJECTION | ASSOCIATION_MODE_POINT_3D
     projection_close_factor: float      # closing radius = factor * fx * voxel / z  [px]
     max_sweeps: int
-    # final-graph filter, applied by filter_by_recognition_confidence() after
-    # compute_recognition_confidence() has populated the fields it reads
-    min_recognized_frames: int          # drop objects recognized in this many frames or fewer
-    min_recognition_confidence: float   # drop objects whose confidence falls below this
+    # recognition-trust thresholds, applied by annotate_recognition_trust() after
+    # compute_recognition_confidence() has populated the fields it reads. Both are
+    # minimums an object must MEET to be trusted -- nothing is removed either way.
+    recognition_min_recognized_frames: int
+    recognition_min_confidence: float
     # merge_obj2_into_obj1 passthrough
     downsample_voxel_size: float
     dbscan_remove_noise: bool
@@ -142,8 +143,8 @@ def geometry_fusion_params_from_cfg(cfg) -> GeometryFusionParams:
         association_gate_mode=str(cfg['fusion_association_gate_mode']),
         projection_close_factor=float(cfg['fusion_projection_close_factor']),
         max_sweeps=int(cfg['fusion_global_consolidation_max_sweeps']),
-        min_recognized_frames=int(cfg['fusion_min_recognized_frames']),
-        min_recognition_confidence=float(cfg['fusion_min_recognition_confidence']),
+        recognition_min_recognized_frames=int(cfg['recognition_min_recognized_frames']),
+        recognition_min_confidence=float(cfg['recognition_min_confidence']),
         downsample_voxel_size=voxel,
         dbscan_remove_noise=bool(cfg['dbscan_remove_noise']),
         dbscan_eps=float(cfg['dbscan_eps']),
@@ -207,13 +208,25 @@ def _points(pcd) -> np.ndarray:
     return np.asarray(pcd.points, dtype=np.float64)
 
 
-def _aabb(pcd):
-    '''Axis-aligned (lo, hi) straight off the point cloud, each shape (3,).'''
-    pts = _points(pcd)
+def aabb_from_points(points):
+    '''
+    Axis-aligned (lo, hi) of a raw (N, 3) point array, each shape (3,).
+
+    Split out from _aabb so callers holding plain numpy -- the before/after benchmark
+    comparison reads 'pcd_np' straight out of the saved pickle, with no open3d cloud
+    to hand -- can reuse the same box the fusion gates use, and feed it to the equally
+    numpy-native _bbox_gate_vector.
+    '''
+    pts = np.asarray(points, dtype=np.float64)
     if len(pts) == 0:
         nan = np.full(3, np.nan)
         return nan, nan
     return pts.min(axis=0), pts.max(axis=0)
+
+
+def _aabb(pcd):
+    '''Axis-aligned (lo, hi) straight off the point cloud, each shape (3,).'''
+    return aabb_from_points(_points(pcd))
 
 
 def _stack_aabbs(objects):
@@ -372,6 +385,36 @@ def projected_footprint(points, view: FrameView, params: GeometryFusionParams, v
         return hits.astype(bool), visible, 0
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
     return cv2.morphologyEx(hits, cv2.MORPH_CLOSE, kernel).astype(bool), visible, radius
+
+
+def trimmed_surface_distance(points_a, points_b, keep_fraction=0.7):
+    """
+    How far apart two point clouds sit, ignoring the worst-matching tail: take every
+    point's nearest-neighbour distance in BOTH directions, sort the pooled distances,
+    and average the smallest `keep_fraction` of them.
+
+    Pooling both directions is what makes this an identity test rather than a
+    containment test. A cushion resting on a sofa has every cushion->sofa distance
+    near zero, so the one-directional average would call them the same object; most
+    sofa->cushion distances are large, and pooling lets them dominate (the pool is
+    sized |A| + |B|, so the larger cloud contributes proportionally more). Trimming
+    the tail is what tolerates the partial overlap two scans of the same object
+    almost always have.
+
+    Used by the benchmark comparison to settle "this object simply did not move"
+    before any appearance similarity is consulted -- the same question, and the same
+    kind of answer, as the position-only merging done between frames during a scan.
+    """
+    a = np.asarray(points_a, dtype=np.float64)
+    b = np.asarray(points_b, dtype=np.float64)
+    if len(a) == 0 or len(b) == 0:
+        return float("inf")
+
+    d_a2b, _ = cKDTree(b).query(a)
+    d_b2a, _ = cKDTree(a).query(b)
+    pooled = np.sort(np.concatenate([d_a2b, d_b2a]))
+    keep = max(1, int(round(keep_fraction * len(pooled))))
+    return float(pooled[:keep].mean())
 
 
 def _directional_overlap(pcd_src, pcd_dst, params: GeometryFusionParams, src_subset=None):
@@ -910,6 +953,45 @@ def global_geometry_consolidation(
 
 # ---------------------------------------------------------------- recognition confidence
 
+def count_visible_frames(object_points, dataset, params: GeometryFusionParams, desc=None):
+    """
+    Walk a whole sequence and ask, per object, from which frames its geometry should
+    have been visible -- frustum plus the z-buffer test against each frame's own depth
+    map, the same visibility the association gates use, gated on min_visible_points.
+
+    Returns (n_visible, visible_frames): a count per object and the matching set of
+    frame indices, so a caller can intersect those frames with something else.
+
+    `object_points` is a list of (N, 3) arrays rather than objects, because the
+    before/after benchmark comparison runs this with one scan's objects against the
+    OTHER scan's dataset -- there is no "this object's own frames" relationship there,
+    only geometry and a camera trajectory.
+    """
+    n_visible = [0] * len(object_points)
+    visible_frames = [set() for _ in object_points]
+    if not object_points:
+        return n_visible, visible_frames
+
+    frames = trange(len(dataset), desc=desc) if desc else range(len(dataset))
+    for frame_idx in frames:
+        _, depth_tensor, intrinsics, *_ = dataset[frame_idx]
+        depth_array = depth_tensor[..., 0].cpu().numpy()
+        pose = dataset.poses[frame_idx].cpu().numpy()
+        view = FrameView.from_frame(
+            cam_to_world=pose, cam_K=intrinsics.cpu().numpy()[:3, :3], depth_array=depth_array)
+
+        for i, pts in enumerate(object_points):
+            if len(pts) == 0:
+                continue
+            visible = _visible_point_mask(pts, view, params)
+            if int(visible.sum()) < params.min_visible_points:
+                continue
+            n_visible[i] += 1
+            visible_frames[i].add(frame_idx)
+
+    return n_visible, visible_frames
+
+
 def compute_recognition_confidence(objects, dataset, params: GeometryFusionParams,
                                    debug: FusionDebugWriter = None) -> None:
     '''
@@ -947,27 +1029,11 @@ def compute_recognition_confidence(objects, dataset, params: GeometryFusionParam
     if len(objects) == 0:
         return
 
-    obj_points = [np.asarray(o['pcd'].points) for o in objects]
     recognized_frames = [set(o['image_idx']) for o in objects]
-    n_visible = [0] * len(objects)
-    n_recognized = [0] * len(objects)
-
-    for frame_idx in trange(len(dataset), desc="Recognition confidence"):
-        _, depth_tensor, intrinsics, *_ = dataset[frame_idx]
-        depth_array = depth_tensor[..., 0].cpu().numpy()
-        pose = dataset.poses[frame_idx].cpu().numpy()
-        view = FrameView.from_frame(
-            cam_to_world=pose, cam_K=intrinsics.cpu().numpy()[:3, :3], depth_array=depth_array)
-
-        for i, pts in enumerate(obj_points):
-            if len(pts) == 0:
-                continue
-            visible = _visible_point_mask(pts, view, params)
-            if int(visible.sum()) < params.min_visible_points:
-                continue
-            n_visible[i] += 1
-            if frame_idx in recognized_frames[i]:
-                n_recognized[i] += 1
+    n_visible, visible_frames = count_visible_frames(
+        [np.asarray(o['pcd'].points) for o in objects], dataset, params,
+        desc="Recognition confidence")
+    n_recognized = [len(visible_frames[i] & recognized_frames[i]) for i in range(len(objects))]
 
     for i, obj in enumerate(objects):
         vis, rec = n_visible[i], n_recognized[i]
@@ -984,52 +1050,52 @@ def compute_recognition_confidence(objects, dataset, params: GeometryFusionParam
             })
 
 
-def filter_by_recognition_confidence(objects, params: GeometryFusionParams,
-                                     debug: FusionDebugWriter = None) -> MapObjectList:
-    '''
-    Drops objects from the final graph whose recognition evidence is too thin to trust:
-    recognized in `min_recognized_frames` frames or fewer -- by default 1, meaning a
-    single detection that only geometric merging (never a second independent look)
-    stitched into whatever it is now -- or with recognition_confidence below
-    `min_recognition_confidence`, meaning most of the angles that should have shown it
-    never did.
+def annotate_recognition_trust(objects, params: GeometryFusionParams,
+                               debug: FusionDebugWriter = None) -> None:
+    """
+    Marks each object `recognition_trusted` -- recognized in at least
+    `recognition_min_recognized_frames` frames AND with recognition_confidence at or
+    above `recognition_min_confidence`.
+
+    Nothing is removed. Weakly-evidenced objects stay in the graph, in obj_json, and in
+    the scene-graph render (drawn with a pale border there); the flag is what the
+    before/after benchmark comparison uses to decide which objects are solid enough to
+    *assert* a change from. An object too weak to claim "this was removed" is still
+    perfectly good as something the other scan's objects can match against, which is
+    why dropping it here would lose information the comparison needs.
 
     Must run after compute_recognition_confidence() has populated the fields this reads.
-    If it never ran (cfg.compute_recognition_confidence is False), those fields are
-    absent and every object is kept unfiltered -- this function is a no-op rather than
-    an error, since filtering on a metric that was never computed isn't meaningful.
+    If that never ran (cfg.compute_recognition_confidence is False), the fields are
+    absent and everything is trusted -- no metric was computed, so there is no basis to
+    doubt anything.
 
     confidence=None (never geometrically visible from any frame -- see
-    compute_recognition_confidence) is not evaluated by the confidence check; it is
-    already caught by the recognized-frames check, since zero visible frames implies
-    zero recognized ones.
-    '''
-    kept, dropped = [], []
+    compute_recognition_confidence) fails the frame-count test anyway, since zero
+    visible frames implies zero recognized ones.
+    """
+    n_trusted = 0
     for obj in objects:
         n_rec = obj.get('recognition_n_recognized')
         if n_rec is None:
-            kept.append(obj)
+            obj['recognition_trusted'] = True
+            n_trusted += 1
             continue
         conf = obj.get('recognition_confidence')
-        few_frames = n_rec <= params.min_recognized_frames
-        low_confidence = conf is not None and conf < params.min_recognition_confidence
-        if few_frames or low_confidence:
-            dropped.append((obj, few_frames, low_confidence))
-        else:
-            kept.append(obj)
-
-    if dropped and debug is not None and debug.enabled:
-        for obj, few_frames, low_confidence in dropped:
-            debug.log("recognition_filter", {
+        trusted = (n_rec >= params.recognition_min_recognized_frames
+                   and conf is not None
+                   and conf >= params.recognition_min_confidence)
+        obj['recognition_trusted'] = trusted
+        n_trusted += int(trusted)
+        if not trusted and debug is not None and debug.enabled:
+            debug.log("recognition_trust", {
                 "obj_num": obj.get('curr_obj_num'),
                 "class_name": obj.get('class_name'),
-                "n_recognized": obj.get('recognition_n_recognized'),
-                "confidence": obj.get('recognition_confidence'),
-                "dropped_few_frames": few_frames,
-                "dropped_low_confidence": low_confidence,
+                "n_recognized": n_rec,
+                "confidence": conf,
+                "failed_frame_count": n_rec < params.recognition_min_recognized_frames,
+                "failed_confidence": conf is None or conf < params.recognition_min_confidence,
             })
 
-    print(f"Recognition-confidence filter: kept {len(kept)}/{len(objects)} objects "
-          f"(min_recognized_frames={params.min_recognized_frames}, "
-          f"min_recognition_confidence={params.min_recognition_confidence})")
-    return MapObjectList(kept)
+    print(f"Recognition trust: {n_trusted}/{len(objects)} objects trusted "
+          f"(min_recognized_frames={params.recognition_min_recognized_frames}, "
+          f"min_confidence={params.recognition_min_confidence}); none removed")

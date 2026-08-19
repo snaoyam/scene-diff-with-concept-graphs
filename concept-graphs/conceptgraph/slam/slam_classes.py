@@ -59,6 +59,9 @@ class MapObjectList(DetectionList):
             
             s_obj_dict['clip_ft'] = to_numpy(s_obj_dict['clip_ft'])
             s_obj_dict['dino_ft'] = to_numpy(s_obj_dict['dino_ft'])
+            for attr in ('clip_ft_mean', 'dino_ft_mean'):
+                if attr in s_obj_dict:
+                    s_obj_dict[attr] = to_numpy(s_obj_dict[attr])
             # s_obj_dict['text_ft'] = to_numpy(s_obj_dict['text_ft'])
             
             s_obj_dict['pcd_np'] = np.asarray(s_obj_dict['pcd'].points)

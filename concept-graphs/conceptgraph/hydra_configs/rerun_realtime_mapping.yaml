@@ -205,17 +205,48 @@ fusion_debug_log: !!bool True          # write <exp_out_path>/fusion_debug/*.jso
 # negligible next to the scan itself.
 compute_recognition_confidence: !!bool True
 
-# Final-graph filter, applied right after compute_recognition_confidence (see
-# filter_by_recognition_confidence in slam/geometric_fusion.py) and before edges,
-# obj_json, and the scene graph visualizations are built -- dropped objects appear in
-# none of that output. No-op when compute_recognition_confidence is False, since there
-# is nothing to filter on. Set either to a value that can never reject (e.g. -1 and
-# 0.0) to disable that half of the filter without disabling the other.
-fusion_min_recognized_frames: 1        # drop objects recognized in this many frames or fewer --
-                                        # 1 means "recognized exactly once, or never, survives only
-                                        # by geometric merging with nothing to independently confirm it"
-fusion_min_recognition_confidence: 0.5 # drop objects whose recognition_confidence is below this --
-                                        # most of the angles that should have shown them didn't
+# Minimums an object must MEET for annotate_recognition_trust (slam/geometric_fusion.py)
+# to mark it recognition_trusted. NOTHING IS REMOVED either way: untrusted objects stay
+# in the graph, in obj_json, and in the scene-graph render (drawn with a pale outline).
+# The flag is consumed by the before/after benchmark comparison, which only asserts
+# "removed"/"added" from trusted objects while still matching against every object on
+# the other side regardless of its trust. An object too weak to claim a change from is
+# still perfectly good evidence that something is there, which is why it is kept.
+# No-op when compute_recognition_confidence is False -- no metric, no basis to doubt.
+recognition_min_recognized_frames: 1    # must be recognized in at least this many frames
+recognition_min_confidence: 0.40        # recognition_confidence must be at least this
+
+# ---- before/after comparison (convert_concept_graphs_to_scene_diff_benchmark_data.py,
+#      which reads this same yaml via hydra.compose; CLI flags there override these) ----
+#
+# Stage 1, geometry. Before any appearance is consulted, pairs whose AABBs overlap are
+# scored by trimmed_surface_distance (pooled two-way nearest-neighbour distances, worst
+# tail trimmed). At or under this distance the pair is matched 1:1 outright and skips
+# the semantic stage entirely -- this is the "it simply did not move" case, and settling
+# it geometrically keeps it off the semantic threshold's shoulders. The distance matches
+# the tau used for position-only merging between frames during a scan
+# (downsample_voxel_size 0.01 * fusion_point_distance_factor 1.5).
+scenediff_geometric_match_max_distance: 0.015
+scenediff_geometric_match_keep_fraction: 0.7   # average only the smallest this fraction of
+                                                # the pooled distances, so partial overlap
+                                                # between two scans doesn't veto a match
+#
+# Stage 2, appearance, for whatever stage 1 left unmatched. The score is the mean cosine
+# similarity over EVERY (before frame, after frame) pair -- computed as one dot product
+# of the objects' mean unit features, which is exactly equal (see clip_ft_mean in
+# slam/utils.py). Many-to-many: one object may match several on the other side.
+# Measured on living_room_17_living_room_18 over the pairs stage 1 left unmatched:
+# same-class pairs scored 0.515 / 0.668 / 0.789 and the highest cross-class pair
+# (shelf vs coffee table) 0.584, leaving a gap between 0.584 and 0.668. 0.62 is the
+# midpoint of that gap. PROVISIONAL -- it is 21 pairs from one scene, measured against
+# a pcd an earlier filter had already thinned, so re-check it once a full run produces
+# unfiltered object sets on both sides.
+scenediff_semantic_sim_threshold: 0.62
+scenediff_clip_weight: 0.5
+scenediff_dino_weight: 0.5
+#
+scenediff_max_match_distance: 1.5   # beyond this centroid distance a pair is never a match
+scenediff_moved_threshold: 0.3      # a matched pair further apart than this counts as moved
 
 # SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
 # ScanNet-style RGB-D sequences by conceptgraph/dataset/scenediff_to_conceptgraph.py.

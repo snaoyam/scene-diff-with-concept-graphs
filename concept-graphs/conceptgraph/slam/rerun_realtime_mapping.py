@@ -86,7 +86,7 @@ from conceptgraph.slam.geometric_fusion import (
     FrameView,
     FusionDebugWriter,
     compute_recognition_confidence,
-    filter_by_recognition_confidence,
+    annotate_recognition_trust,
     fuse_detections_geometry_only,
     geometry_fusion_params_from_cfg,
     global_geometry_consolidation,
@@ -97,7 +97,7 @@ from conceptgraph.utils.general_utils import get_vis_out_path, cfg_to_dict, chec
 from conceptgraph.utils.scenegraph_viz import render_frame_scenegraph
 from conceptgraph.utils.visualize_full_scenegraph import load_scene_graph, render_full_scenegraph
 
-VERSION_TEXT = "confidence 필터링"
+VERSION_TEXT = "scenediff 벤치마크 개선"
 
 # Disable torch gradient computation
 torch.set_grad_enabled(False)
@@ -919,10 +919,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             params=geo_fusion_params,
             debug=fusion_debug,
         )
-        # Drop weakly-evidenced objects before the final graph (edges, obj_json,
-        # scenegraph viz) is built from `objects`, so none of that ever sees them.
-        objects = filter_by_recognition_confidence(objects, geo_fusion_params, debug=fusion_debug)
-        map_edges.update_objects_list(objects)
+        # Flag weakly-evidenced objects without removing any -- they stay in the graph,
+        # obj_json, and the scene-graph render. The flag is consumed later, by the
+        # before/after benchmark comparison.
+        annotate_recognition_trust(objects, geo_fusion_params, debug=fusion_debug)
     fusion_debug.close()
 
     # Build the whole scene's object graph once, from the final (fully
