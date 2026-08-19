@@ -50,9 +50,15 @@ on a different pixel/mask, so sideways leakage across genuinely different-but-to
 objects (a blanket draped on a sofa, a pillow resting on a cushion) was impossible under
 projection and came back under 3D -- see the leak discussion below, which is what this
 reverts to fixing. The seed/thin-object-on-seed risk 3D was covering is back as a known
-gap; _eroded_mask_subset (still used by the 3D fallback paths described below) does not
-help it, since that trims the DETECTION's own mask boundary, not the SEED's stale
-footprint.
+gap in the SPATIAL gate specifically; _eroded_mask_subset (still used by the 3D fallback
+paths described below) does not help it, since that trims the DETECTION's own mask
+boundary, not the SEED's stale footprint. What does help: evaluate_detection_gates now
+backstops a seed-descended object (has 'confirmed_pcd', see load_prior_scene_objects_as_seeds)
+with a CLIP+DINO similarity check whenever that object's this-scan-only geometry can't yet
+independently confirm the spatial match on its own -- a new book on a desk seed looks
+nothing like the desk it's spatially close to, so it fails that check even though the
+desk's stale footprint still spatially swallows it. See evaluate_detection_gates' own
+docstring for the exact two-stage rule.
 
 Sideways leakage on screen is impossible in principle -- a point a centimetre to the
 side of a genuinely different object lands on a different pixel, which belongs to a
@@ -95,6 +101,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import torch
 from scipy.spatial import cKDTree
 from tqdm import trange
 
@@ -109,6 +116,11 @@ ASSOCIATION_MODE_POINT_3D = "point_3d"      # 3D: nearest-neighbour ratios, kept
 REASON_TOO_FEW_POINTS = "too_few_points"
 REASON_BBOX_REJECT = "bbox_reject"
 REASON_POINT_OVERLAP_REJECT = "point_overlap_reject"
+# Passed the spatial gate against a seed-descended object's FULL geometry (seed +
+# confirmed), but that object's confirmed-only share (see slam/utils.py's
+# load_prior_scene_objects_as_seeds) didn't independently pass, and CLIP+DINO
+# similarity to the detection fell short too -- see evaluate_detection_gates.
+REASON_APPEARANCE_REJECT = "appearance_reject"
 REASON_MERGE = "merge"
 REASON_DEFERRED = "deferred_to_next_sweep"
 # Passed both gates on the weak (containment) direction, but another weak candidate
@@ -131,6 +143,9 @@ class GeometryFusionParams:
     min_visible_points: int             # below this, the containment direction carries no evidence
     association_gate_mode: str          # ASSOCIATION_MODE_PROJECTION (default) | ASSOCIATION_MODE_POINT_3D
     projection_close_factor: float      # closing radius = factor * fx * voxel / z  [px]
+    seed_semantic_sim_threshold: float  # CLIP+DINO similarity floor for a seed-descended
+                                         # object whose confirmed-only geometry doesn't yet
+                                         # independently pass the spatial gate on its own
     max_sweeps: int
     # recognition-trust thresholds, applied by annotate_recognition_trust() after
     # compute_recognition_confidence() has populated the fields it reads. Both are
@@ -158,6 +173,7 @@ def geometry_fusion_params_from_cfg(cfg) -> GeometryFusionParams:
         min_visible_points=int(cfg['fusion_min_visible_points']),
         association_gate_mode=str(cfg['fusion_association_gate_mode']),
         projection_close_factor=float(cfg['fusion_projection_close_factor']),
+        seed_semantic_sim_threshold=float(cfg['fusion_seed_semantic_sim_threshold']),
         max_sweeps=int(cfg['fusion_global_consolidation_max_sweeps']),
         recognition_min_recognized_frames=int(cfg['recognition_min_recognized_frames']),
         recognition_min_confidence=float(cfg['recognition_min_confidence']),
@@ -594,6 +610,63 @@ def _association_by_projection(det, obj_pcd, params: GeometryFusionParams, view:
     return strong_ratio, weak_ratio, None, None
 
 
+def _association_overlap(det, det_eroded_idx, target_pcd, params: GeometryFusionParams,
+                          view: FrameView, visibility: "_VisibilityCache", record: dict):
+    '''
+    Core of the association gate, generalized to any target point cloud -- normally
+    obj['pcd'], but evaluate_detection_gates also calls this against
+    obj['confirmed_pcd'] (a seed-descended object's this-scan-only share, see
+    slam/utils.py's load_prior_scene_objects_as_seeds) to decide whether that object
+    still needs an appearance check. Writes its diagnostic fields into `record`
+    (n_visible_obj_points, projection ratios, footprint pixel counts, overlap_*) --
+    pass a scratch dict for a call whose diagnostics shouldn't clobber the primary
+    call's fields in the caller's real record.
+
+    Returns (strong_overlap, weak_overlap, used_projection).
+    '''
+    det_pcd = det['pcd']
+    overlap_d2o = _directional_overlap(det_pcd, target_pcd, params, src_subset=det_eroded_idx)[0]
+    record["overlap_det_to_obj"] = overlap_d2o
+    record["overlap_obj_to_det"] = _directional_overlap(target_pcd, det_pcd, params, dst_subset=det_eroded_idx)[0]
+    strong_overlap = overlap_d2o
+    weak_overlap = None
+    used_projection = False
+
+    visible = visibility.mask_for(target_pcd) if visibility is not None else (
+        _visible_point_mask(_points(target_pcd), view, params) if view is not None else None)
+    if visible is not None:
+        record["n_visible_obj_points"] = int(visible.sum())
+    has_view = visible is not None and record["n_visible_obj_points"] >= params.min_visible_points
+
+    if has_view and params.association_gate_mode == ASSOCIATION_MODE_PROJECTION:
+        proj_strong, proj_weak, _, _ = _association_by_projection(det, target_pcd, params, view, visibility, visible, record)
+        if proj_strong is not None:
+            strong_overlap = proj_strong
+            weak_overlap = proj_weak
+            used_projection = True
+    elif has_view:
+        weak_overlap = _directional_overlap(
+            target_pcd, det_pcd, params, src_subset=np.nonzero(visible)[0], dst_subset=det_eroded_idx)[0]
+        record["overlap_visible_obj_to_det"] = weak_overlap
+
+    return strong_overlap, weak_overlap, used_projection
+
+
+def _clip_dino_similarity(det, obj, clip_weight: float = 0.5, dino_weight: float = 0.5) -> float:
+    '''
+    How alike a detection and an object look, via the same weighted-dot-product formula
+    convert_concept_graphs_to_scene_diff_benchmark_data.py's semantic_similarity() uses
+    for the offline before/after comparison (clip_ft_mean/dino_ft_mean are running means
+    of L2-normalized per-frame features, never renormalized, so their dot product IS the
+    average cosine similarity over every frame pair -- see that function's docstring).
+    Cast to float32 here since det's and obj's features aren't guaranteed to share dtype
+    (e.g. an fp16 detection feature against a seed's carried-over fp32 mean).
+    '''
+    clip_sim = float(torch.dot(det['clip_ft_mean'].float(), obj['clip_ft_mean'].float()))
+    dino_sim = float(torch.dot(det['dino_ft_mean'].float(), obj['dino_ft_mean'].float()))
+    return clip_weight * clip_sim + dino_weight * dino_sim
+
+
 def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: FrameView = None,
                              visibility: "_VisibilityCache" = None, det_eroded_idx=None) -> dict:
     """
@@ -623,6 +696,18 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
 
     `gate_class` on a passing record says which direction earned the pass; the caller uses
     it to apply "merge every strong match, but only the closest weak one".
+
+    For a seed-descended `obj` (has a 'confirmed_pcd' key -- see slam/utils.py's
+    load_prior_scene_objects_as_seeds), passing the above is not enough on its own. A
+    second spatial check runs against confirmed_pcd alone (this scan's own re-confirmed
+    share, excluding whatever geometry the object still carries straight from the
+    "before" scan): if THAT independently passes the same gate, the object has already
+    earned enough of this scan's own evidence and the match proceeds exactly as above.
+    If not -- confirmed_pcd is still empty or too sparse, or it just doesn't spatially
+    match this detection -- a CLIP+DINO similarity check (_clip_dino_similarity) against
+    params.seed_semantic_sim_threshold decides instead, since spatial proximity to a
+    stale seed footprint alone can't tell "the same object, still there" from "something
+    new placed flush against it" (see the module docstring).
     """
     record = {
         "bbox_pass": True,
@@ -640,6 +725,11 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
         "primary_overlap": 0.0,
         "point_gate_direction": None,
         "point_gate_pass": False,
+        "confirmed_primary_overlap": None,
+        "confirmed_gate_pass": None,
+        "appearance_gate_required": False,
+        "appearance_gate_pass": None,
+        "semantic_similarity": None,
         "merged": False,
         "reason": REASON_POINT_OVERLAP_REJECT,
     }
@@ -652,31 +742,11 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
     if det_eroded_idx is None:
         det_eroded_idx = _eroded_mask_subset(det, det_pcd, view, params)
 
-    # The 3D ratio is always available as the point_3d mode's answer and, under
-    # projection, the fallback for whenever a footprint can't be formed.
-    overlap_d2o = _directional_overlap(det_pcd, obj_pcd, params, src_subset=det_eroded_idx)[0]
-    record["overlap_det_to_obj"] = overlap_d2o
-    record["overlap_obj_to_det"] = _directional_overlap(obj_pcd, det_pcd, params, dst_subset=det_eroded_idx)[0]
-    strong_overlap = overlap_d2o
-    strong_direction, weak_direction = "det_to_obj", "visible_obj_to_det"
-    weak_overlap = None
-
-    visible = visibility.mask_for(obj_pcd) if visibility is not None else (
-        _visible_point_mask(_points(obj_pcd), view, params) if view is not None else None)
-    if visible is not None:
-        record["n_visible_obj_points"] = int(visible.sum())
-    has_view = visible is not None and record["n_visible_obj_points"] >= params.min_visible_points
-
-    if has_view and params.association_gate_mode == ASSOCIATION_MODE_PROJECTION:
-        proj_strong, proj_weak, _, _ = _association_by_projection(det, obj_pcd, params, view, visibility, visible, record)
-        if proj_strong is not None:
-            strong_overlap = proj_strong
-            weak_overlap = proj_weak
-            strong_direction, weak_direction = "projection_det_to_obj", "projection_obj_to_det"
-    elif has_view:
-        weak_overlap = _directional_overlap(
-            obj_pcd, det_pcd, params, src_subset=np.nonzero(visible)[0], dst_subset=det_eroded_idx)[0]
-        record["overlap_visible_obj_to_det"] = weak_overlap
+    strong_overlap, weak_overlap, used_projection = _association_overlap(
+        det, det_eroded_idx, obj_pcd, params, view, visibility, record)
+    strong_direction, weak_direction = (
+        ("projection_det_to_obj", "projection_obj_to_det") if used_projection
+        else ("det_to_obj", "visible_obj_to_det"))
 
     record["strong_overlap"] = strong_overlap
     record["weak_overlap"] = weak_overlap
@@ -691,6 +761,24 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
     if record["primary_overlap"] < params.point_overlap_thresh:
         return record
     record["point_gate_pass"] = True
+
+    confirmed_pcd = obj.get('confirmed_pcd')
+    if confirmed_pcd is not None:
+        confirmed_primary = 0.0
+        if len(confirmed_pcd.points) >= params.min_points_for_gates:
+            c_strong, c_weak, _ = _association_overlap(det, det_eroded_idx, confirmed_pcd, params, view, visibility, {})
+            confirmed_primary = c_weak if (c_weak is not None and c_weak > c_strong) else c_strong
+        record["confirmed_primary_overlap"] = confirmed_primary
+        record["confirmed_gate_pass"] = confirmed_primary >= params.point_overlap_thresh
+
+        if not record["confirmed_gate_pass"]:
+            record["appearance_gate_required"] = True
+            similarity = _clip_dino_similarity(det, obj)
+            record["semantic_similarity"] = similarity
+            record["appearance_gate_pass"] = similarity >= params.seed_semantic_sim_threshold
+            if not record["appearance_gate_pass"]:
+                record["reason"] = REASON_APPEARANCE_REJECT
+                return record
 
     record["reason"] = REASON_MERGE
     # A strong claim stands on its own -- the detection is substantially this object, so

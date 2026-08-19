@@ -22,7 +22,8 @@
 /.trash/
 /benchmark_output/*
 /terminal-output/*
-/outputs-*/
+/outputs*/
+/isolated-outputs*/
 /hydra-logs/
 /.isolated-runs/
 concept-graphs/latest_pcd_save

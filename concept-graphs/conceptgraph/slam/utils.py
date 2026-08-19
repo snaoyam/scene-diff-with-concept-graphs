@@ -212,7 +212,8 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     # only for post-hoc traceability and are never read to make a fusion decision.
     skip_attributes = ['id', 'class_name', 'is_background', 'new_counter', 'curr_obj_num', 'inst_color',
                         'is_seeded_prior', 'seed_source_before_id']  # 'inst_color' just keeps obj1's
-    custom_handled = ['pcd', 'bbox', 'clip_ft', 'dino_ft', 'clip_ft_mean', 'dino_ft_mean', 'text_ft', 'n_points']
+    custom_handled = ['pcd', 'bbox', 'clip_ft', 'dino_ft', 'clip_ft_mean', 'dino_ft_mean', 'text_ft', 'n_points',
+                       'confirmed_pcd']
 
     # Check for unhandled keys and throw an error if there are
     all_handled_keys = set(extend_attributes + add_attributes + skip_attributes + custom_handled)
@@ -248,6 +249,17 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     # Update 'bbox'
     obj1['bbox'] = get_bounding_box(spatial_sim_type, obj1['pcd'])
     obj1['bbox'].color = [0, 1, 0]
+
+    # confirmed_pcd only exists on seed-descended objects (load_prior_scene_objects_as_seeds)
+    # -- grow it in lockstep with 'pcd', but only from obj2's own CONFIRMED share: if obj2 is
+    # itself a seed, that's obj2['confirmed_pcd'] (not its whole pcd, which may still carry
+    # unconfirmed seed geometry); otherwise obj2 is a real detection or an ordinary
+    # (never-seeded) object, and its entire pcd counts as confirmed by this scan.
+    if 'confirmed_pcd' in obj1:
+        obj1['confirmed_pcd'] += obj2.get('confirmed_pcd', obj2['pcd'])
+        obj1['confirmed_pcd'] = process_pcd(
+            obj1['confirmed_pcd'], downsample_voxel_size, dbscan_remove_noise, dbscan_eps, dbscan_min_points, run_dbscan
+        )
 
     # Merge and normalize 'clip_ft'
     obj1['clip_ft'] = (obj1['clip_ft'] * n_obj1_det + obj2['clip_ft'] * n_obj2_det) / (n_obj1_det + n_obj2_det)
@@ -962,6 +974,15 @@ def load_prior_scene_objects_as_seeds(
             # as obj1 pass through untouched by every merge.
             'is_seeded_prior': True,
             'seed_source_before_id': obj['id'],
+            # Points contributed by THIS scan's own real detections only -- starts
+            # empty since the seed itself carries none. merge_obj2_into_obj1 grows
+            # this in lockstep with 'pcd' whenever this object is obj1, but only ever
+            # from obj2's *confirmed* share (its own confirmed_pcd if it has one,
+            # otherwise its whole pcd -- see merge_obj2_into_obj1). A plain object
+            # (no seed history) never gets this key at all: geometric_fusion.py reads
+            # its absence as "every one of this object's points is already confirmed
+            # by this scan", which is trivially true for a non-seeded object.
+            'confirmed_pcd': o3d.geometry.PointCloud(),
         }
         seeds.append(seed)
 

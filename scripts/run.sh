@@ -12,7 +12,7 @@ timestamp="$(date '+%Y-%m-%d_%H-%M-%S')"
 # (construct-concept-graphs.sh 등 참고) -- 3단계 모두 같은 값을 봐야 하므로 여기서만 정한다.
 ISOLATED_RUN="${ISOLATED_RUN:-1}"
 if [[ "$ISOLATED_RUN" == "0" ]]; then
-    OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/outputs-test"
+    OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/outputs"
 else
     OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/isolated-outputs"
 fi

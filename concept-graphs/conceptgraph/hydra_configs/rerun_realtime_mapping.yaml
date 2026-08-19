@@ -194,6 +194,21 @@ fusion_projection_close_factor: 1.0
 fusion_min_points_for_gates: 4         # pairs with fewer points than this auto-reject
 fusion_global_consolidation_max_sweeps: 20  # safety cap on the post-scan merge-until-fixpoint loop
 
+# Seed-descended objects only (slam/utils.py's load_prior_scene_objects_as_seeds): once a
+# detection passes the spatial gate against the object's FULL geometry (seed + confirmed),
+# a second spatial check runs against 'confirmed_pcd' alone -- the object's this-scan-only
+# share, i.e. what its geometry would be if the carried-over seed points didn't exist. If
+# that second check independently passes on its own, the object already has enough of
+# THIS scan's own evidence and the match is accepted with no further check, same as any
+# ordinary object. If not, spatial proximity to the (possibly stale) seed footprint alone
+# isn't trusted -- CLIP+DINO similarity between the detection and the object must also
+# clear this floor. Same formula, weights, and starting value as
+# scenediff_semantic_sim_threshold/scenediff_clip_weight/scenediff_dino_weight (the
+# offline before/after comparison's own appearance check) -- kept as a separate key since
+# this one gates a live, per-frame decision rather than an after-the-fact comparison and
+# may need retuning independently.
+fusion_seed_semantic_sim_threshold: 0.62
+
 # After every object's geometry is final, re-walk the whole sequence once more (no
 # detection, just each frame's pose+depth) and for each object ask: over the frames
 # from which this object's FINAL shape should have been visible (same frustum +
