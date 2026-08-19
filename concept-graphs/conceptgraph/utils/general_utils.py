@@ -685,7 +685,15 @@ def save_obj_json(exp_suffix, exp_out_path, objects):
             "object_caption": curr_obj.get('consolidated_caption', None),
             "bbox_extent": bbox_extent,
             "bbox_center": bbox_center,
-            "bbox_volume": bbox_volume  # Add the volume to the dictionary
+            "bbox_volume": bbox_volume,  # Add the volume to the dictionary
+            # How much of this object's should-have-been-visible angular coverage is
+            # backed by an actual detection, vs. only inherited through 3D merging --
+            # see compute_recognition_confidence() in slam/geometric_fusion.py. None
+            # when compute_recognition_confidence is disabled or the object was never
+            # geometrically visible from any frame.
+            "recognition_confidence": curr_obj.get('recognition_confidence'),
+            "recognition_n_visible": curr_obj.get('recognition_n_visible'),
+            "recognition_n_recognized": curr_obj.get('recognition_n_recognized'),
         }
         json_obj_list[obj_key] = obj_dict
         

@@ -192,6 +192,31 @@ fusion_min_points_for_gates: 4         # pairs with fewer points than this auto-
 fusion_global_consolidation_max_sweeps: 20  # safety cap on the post-scan merge-until-fixpoint loop
 fusion_debug_log: !!bool True          # write <exp_out_path>/fusion_debug/*.jsonl
 
+# After every object's geometry is final, re-walk the whole sequence once more (no
+# detection, just each frame's pose+depth) and for each object ask: over the frames
+# from which this object's FINAL shape should have been visible (same frustum +
+# z-buffer test the association gates use, gated on fusion_min_visible_points),
+# how many actually had a detection merged into it (any single point of a mask
+# counts -- see compute_recognition_confidence in slam/geometric_fusion.py)?
+# confidence = recognized / should-have-been-visible. A pillow only ever caught
+# from 3 of the 15 angles that exposed it is a real object stitched together
+# correctly, but with weak evidence -- this is how that gets told apart from one
+# seen from all 15. Cost is one extra depth/pose read per frame (no SAM/YOLO/CLIP),
+# negligible next to the scan itself.
+compute_recognition_confidence: !!bool True
+
+# Final-graph filter, applied right after compute_recognition_confidence (see
+# filter_by_recognition_confidence in slam/geometric_fusion.py) and before edges,
+# obj_json, and the scene graph visualizations are built -- dropped objects appear in
+# none of that output. No-op when compute_recognition_confidence is False, since there
+# is nothing to filter on. Set either to a value that can never reject (e.g. -1 and
+# 0.0) to disable that half of the filter without disabling the other.
+fusion_min_recognized_frames: 1        # drop objects recognized in this many frames or fewer --
+                                        # 1 means "recognized exactly once, or never, survives only
+                                        # by geometric merging with nothing to independently confirm it"
+fusion_min_recognition_confidence: 0.5 # drop objects whose recognition_confidence is below this --
+                                        # most of the angles that should have shown them didn't
+
 # SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
 # ScanNet-style RGB-D sequences by conceptgraph/dataset/scenediff_to_conceptgraph.py.
 # Each SceneDiff pair produces two ConceptGraph scenes sharing one Pi3-estimated

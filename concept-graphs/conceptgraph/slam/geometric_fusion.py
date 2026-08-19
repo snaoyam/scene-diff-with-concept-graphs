@@ -70,6 +70,7 @@ import cv2
 import numpy as np
 import open3d as o3d
 from scipy.spatial import cKDTree
+from tqdm import trange
 
 from conceptgraph.slam.slam_classes import DetectionList, MapObjectList
 from conceptgraph.slam.utils import from_intrinsics_matrix, get_bounding_box, merge_obj2_into_obj1
@@ -112,6 +113,10 @@ class GeometryFusionParams:
     association_gate_mode: str          # ASSOCIATION_MODE_PROJECTION | ASSOCIATION_MODE_POINT_3D
     projection_close_factor: float      # closing radius = factor * fx * voxel / z  [px]
     max_sweeps: int
+    # final-graph filter, applied by filter_by_recognition_confidence() after
+    # compute_recognition_confidence() has populated the fields it reads
+    min_recognized_frames: int          # drop objects recognized in this many frames or fewer
+    min_recognition_confidence: float   # drop objects whose confidence falls below this
     # merge_obj2_into_obj1 passthrough
     downsample_voxel_size: float
     dbscan_remove_noise: bool
@@ -137,6 +142,8 @@ def geometry_fusion_params_from_cfg(cfg) -> GeometryFusionParams:
         association_gate_mode=str(cfg['fusion_association_gate_mode']),
         projection_close_factor=float(cfg['fusion_projection_close_factor']),
         max_sweeps=int(cfg['fusion_global_consolidation_max_sweeps']),
+        min_recognized_frames=int(cfg['fusion_min_recognized_frames']),
+        min_recognition_confidence=float(cfg['fusion_min_recognition_confidence']),
         downsample_voxel_size=voxel,
         dbscan_remove_noise=bool(cfg['dbscan_remove_noise']),
         dbscan_eps=float(cfg['dbscan_eps']),
@@ -899,3 +906,130 @@ def global_geometry_consolidation(
 
     print(f"After global geometry consolidation: {len(obj_list)}")
     return MapObjectList(obj_list)
+
+
+# ---------------------------------------------------------------- recognition confidence
+
+def compute_recognition_confidence(objects, dataset, params: GeometryFusionParams,
+                                   debug: FusionDebugWriter = None) -> None:
+    '''
+    For each object, using its FINAL merged geometry: over every frame in the sequence,
+    was this object in a position this camera should have seen it (frustum + z-buffer
+    against that frame's own depth map, the same visibility test the association gates
+    use), and if so, did a detection actually get merged into this object from that
+    frame? confidence = recognized / should-have-been-visible.
+
+    "Recognized" is deliberately loose -- a single point of a merged detection's mask
+    landing on this object in a frame counts, matching how the gates themselves decide
+    to merge on partial evidence. This metric is not about how COMPLETE any one
+    detection was; it is about which of the angles this object geometrically exposed
+    the pipeline actually got a look from, versus which are backed by nothing but the
+    3D merge that stitched this node together. A pillow assembled from three viewpoints
+    out of fifteen it was visible from is a real object with weak evidence, and that
+    gap is exactly what downstream (e.g. deciding whether an apparent removal in the
+    "after" scan is real or just never-observed) needs to know.
+
+    Runs once, after global consolidation, so every object's geometry is final --
+    running it earlier would score partially-merged fragments against a visibility test
+    their own future growth hasn't happened yet, moving the ground under the metric.
+
+    `image_idx` already carries exactly what "recognized in frame f" means: it is
+    extended (never overwritten) by merge_obj2_into_obj1 for every detection folded
+    into this object, whether that happened during online fusion or a later
+    consolidation merge, so it already reflects the object's full merge history.
+
+    Mutates each object in place with `recognition_confidence` (float in [0, 1], or
+    None if the object was never geometrically visible from any frame -- which should
+    not happen for anything that was actually detected, but is not fabricated into a
+    number if it does) plus the raw counts behind it, `recognition_n_visible` and
+    `recognition_n_recognized`.
+    '''
+    if len(objects) == 0:
+        return
+
+    obj_points = [np.asarray(o['pcd'].points) for o in objects]
+    recognized_frames = [set(o['image_idx']) for o in objects]
+    n_visible = [0] * len(objects)
+    n_recognized = [0] * len(objects)
+
+    for frame_idx in trange(len(dataset), desc="Recognition confidence"):
+        _, depth_tensor, intrinsics, *_ = dataset[frame_idx]
+        depth_array = depth_tensor[..., 0].cpu().numpy()
+        pose = dataset.poses[frame_idx].cpu().numpy()
+        view = FrameView.from_frame(
+            cam_to_world=pose, cam_K=intrinsics.cpu().numpy()[:3, :3], depth_array=depth_array)
+
+        for i, pts in enumerate(obj_points):
+            if len(pts) == 0:
+                continue
+            visible = _visible_point_mask(pts, view, params)
+            if int(visible.sum()) < params.min_visible_points:
+                continue
+            n_visible[i] += 1
+            if frame_idx in recognized_frames[i]:
+                n_recognized[i] += 1
+
+    for i, obj in enumerate(objects):
+        vis, rec = n_visible[i], n_recognized[i]
+        obj['recognition_n_visible'] = vis
+        obj['recognition_n_recognized'] = rec
+        obj['recognition_confidence'] = (rec / vis) if vis > 0 else None
+        if debug is not None and debug.enabled:
+            debug.log("recognition_confidence", {
+                "obj_num": obj.get('curr_obj_num'),
+                "class_name": obj.get('class_name'),
+                "n_frames_visible": vis,
+                "n_frames_recognized": rec,
+                "confidence": obj['recognition_confidence'],
+            })
+
+
+def filter_by_recognition_confidence(objects, params: GeometryFusionParams,
+                                     debug: FusionDebugWriter = None) -> MapObjectList:
+    '''
+    Drops objects from the final graph whose recognition evidence is too thin to trust:
+    recognized in `min_recognized_frames` frames or fewer -- by default 1, meaning a
+    single detection that only geometric merging (never a second independent look)
+    stitched into whatever it is now -- or with recognition_confidence below
+    `min_recognition_confidence`, meaning most of the angles that should have shown it
+    never did.
+
+    Must run after compute_recognition_confidence() has populated the fields this reads.
+    If it never ran (cfg.compute_recognition_confidence is False), those fields are
+    absent and every object is kept unfiltered -- this function is a no-op rather than
+    an error, since filtering on a metric that was never computed isn't meaningful.
+
+    confidence=None (never geometrically visible from any frame -- see
+    compute_recognition_confidence) is not evaluated by the confidence check; it is
+    already caught by the recognized-frames check, since zero visible frames implies
+    zero recognized ones.
+    '''
+    kept, dropped = [], []
+    for obj in objects:
+        n_rec = obj.get('recognition_n_recognized')
+        if n_rec is None:
+            kept.append(obj)
+            continue
+        conf = obj.get('recognition_confidence')
+        few_frames = n_rec <= params.min_recognized_frames
+        low_confidence = conf is not None and conf < params.min_recognition_confidence
+        if few_frames or low_confidence:
+            dropped.append((obj, few_frames, low_confidence))
+        else:
+            kept.append(obj)
+
+    if dropped and debug is not None and debug.enabled:
+        for obj, few_frames, low_confidence in dropped:
+            debug.log("recognition_filter", {
+                "obj_num": obj.get('curr_obj_num'),
+                "class_name": obj.get('class_name'),
+                "n_recognized": obj.get('recognition_n_recognized'),
+                "confidence": obj.get('recognition_confidence'),
+                "dropped_few_frames": few_frames,
+                "dropped_low_confidence": low_confidence,
+            })
+
+    print(f"Recognition-confidence filter: kept {len(kept)}/{len(objects)} objects "
+          f"(min_recognized_frames={params.min_recognized_frames}, "
+          f"min_recognition_confidence={params.min_recognition_confidence})")
+    return MapObjectList(kept)
