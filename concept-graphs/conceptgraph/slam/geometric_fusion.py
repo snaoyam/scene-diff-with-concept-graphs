@@ -889,7 +889,11 @@ def fuse_detections_geometry_only(
             # log row names a specific object in a specific overlay image.
             record["obj_num"] = obj_list[obj_idx].get('curr_obj_num')
             records.append((int(obj_idx), record))
-            if not record["point_gate_pass"]:
+            # point_gate_pass alone isn't enough any more: a seed-descended candidate
+            # (see evaluate_detection_gates) can pass the spatial gate and still get
+            # rejected by the appearance gate that follows it, in which case gate_class
+            # is never set. Only a record that made it all the way through has one.
+            if "gate_class" not in record:
                 continue
             (strong_ids if record["gate_class"] == "strong" else weak_ids).append(int(obj_idx))
 
