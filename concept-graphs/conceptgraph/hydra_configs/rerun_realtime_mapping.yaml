@@ -108,12 +108,21 @@ dino_mask_erosion_px: 5
 min_points_threshold: 16 # projected and sampled pcd with less points will be skipped
 
 # Same-scan object fusion (see slam/geometric_fusion.py): 3D bbox gate -> association
-# gate (strong/weak, see fusion_association_gate_mode) -> surface normal consistency
-# gate, then merge every STRONG match (so a new observation can bridge nodes an earlier
-# frame split apart) plus the single closest weak one. No periodic merge pass during the
-# scan; a single global consolidation runs after the last frame instead. clip_ft/dino_ft/
-# text_ft are never consulted for the fusion decision -- they're still extracted and
-# stored for the before/after graph matching.
+# gate (strong/weak, both 3D nearest-neighbour point ratios), then merge every STRONG
+# match (so a new observation can bridge nodes an earlier frame split apart) plus the
+# single closest weak one. No periodic merge pass during the scan; a single global
+# consolidation runs after the last frame instead. clip_ft/dino_ft/text_ft are never
+# consulted for the fusion decision -- they're still extracted and stored for the
+# before/after graph matching.
+#
+# A surface-normal-consistency gate used to run after the association gate (reject a
+# match whose tau-inlier correspondence points' normals disagree). Dropped: it was
+# blind to two flush, same-facing surfaces anyway (abs() treats opposite-facing normals
+# as agreeing, since estimate_normals leaves them unoriented), and it was actively
+# rejecting genuine matches between different faces of the same large object (e.g. a
+# cabinet's front and side panel have legitimately different local normals), fragmenting
+# large objects into one node per face. No replacement for the angled-surface-mismatch
+# protection it did also provide has been added back yet.
 
 fusion_bbox_margin: 0.02               # AABB candidate slack [m]; boxes within this distance
                                         # of each other count as overlapping, absorbing RGB-D
@@ -145,21 +154,30 @@ fusion_visibility_depth_tolerance: 0.05 # z-buffer slack [m] for the occlusion t
 fusion_min_visible_points: 16          # fewer visible object points than this carries no evidence, so
                                         # the pair falls back to the 3D strong ratio alone
 
-# How BOTH association directions are measured.
-#   projection -- intersect the detection's 2D mask with the node's projected footprint once, then
-#                 read strong and weak off it by dividing by |mask(D)| and |footprint(O)|.
-#   point_3d   -- the previous nearest-neighbour ratios in 3D (fraction of one cloud within tau of
-#                 the other), kept so a run can be compared against the old behaviour.
-# 3D leaks sideways, because "some point lies within tau" is much weaker evidence than pixel
-# containment. Measured on living_room_17: the weak direction scored 0.28-0.49 for the sofa against
-# a handbag resting on it in every frame, and 0.90 once the frame border cropped the bag down to its
-# contact band -- which destroyed that node; on screen the same comparisons give 0.00-0.01 while the
-# bag's own mask still scores 0.89-0.99. The strong direction leaks the same way but more mildly:
-# 20 merges scored 1.000 in 3D for small frame-clipped detections against the big sofa node, and
-# re-scoring 15 of them on screen put two below this threshold and most of the rest well under 1.0.
-fusion_association_gate_mode: projection
+# Both association directions are 3D nearest-neighbour point ratios (fraction of one cloud
+# within fusion_point_distance_factor * downsample_voxel_size of the other) -- see
+# slam/geometric_fusion.py's module docstring. A 2D variant (intersecting the detection's mask
+# with the object's points projected into this frame) was tried and reverted: it fixed 3D's
+# sideways leaking (measured on living_room_17 -- the weak direction scored 0.28-0.49 for the
+# sofa against a handbag resting on it in every frame, and 0.90 once the frame border cropped
+# the bag down to its contact band, which destroyed that node) but broke "before"-scan-seeded
+# objects (slam/utils.py's load_prior_scene_objects_as_seeds): a thin new object placed flush
+# against a seeded surface (e.g. a book on a previously-bare desk) can read as within the
+# occlusion test's noise tolerance rather than genuinely occluding, so the seed's stale
+# footprint keeps covering the new object's mask and swallows its detection into the old node.
+# The 3D ratio has no such blind spot -- a point only counts as covered when a real point of
+# the other cloud is actually nearby, camera or no camera. To keep the sideways-leak risk that
+# comes back with it rare in practice, a detection's own points are first restricted to
+# geometric_fusion._eroded_mask_subset -- this frame's own SAM mask, eroded inward by tau
+# (this frame's own depth/camera only, so it carries none of the cross-scan risk the reverted
+# 2D approach had) -- before either direction's overlap is computed, so the boundary points
+# where a touching-but-different object is most likely to land within tau never enter the
+# search at all.
 
-# Closing radius for the projected footprint, as a multiple of one voxel's pixel footprint:
+# Closing radius for the projected footprint used by projected_footprint() (visualization's
+# fused_masks/ "-r" reprojection overlay, and cross-scan visibility counting for
+# recognition-confidence and the before/after benchmark comparison) -- not used by the
+# association gates above, as a multiple of one voxel's pixel footprint:
 #   radius[px] = this * fx * downsample_voxel_size / z   (median over the visible points)
 # Closing fills the gaps voxel downsampling leaves (a detection's own cloud covers ~3% of its own
 # mask) without moving the outer silhouette. Deriving the radius rather than fixing it in pixels
@@ -167,12 +185,6 @@ fusion_association_gate_mode: projection
 # interior holes but starts bleeding the silhouette outward onto whatever the object rests on.
 fusion_projection_close_factor: 1.0
 
-fusion_normal_radius_factor: 3.0       # normal estimation radius = downsample_voxel_size * this
-fusion_normal_angle_thresh_deg: 30.0   # a correspondence agrees when |n_D . n_O| >= cos(this)
-fusion_normal_consistency_thresh: 0.70 # required fraction of agreeing correspondences, counted
-                                        # over the tau-inlier correspondences only
-
-fusion_normal_max_nn: 30               # KDTreeSearchParamHybrid max_nn for estimate_normals
 fusion_min_points_for_gates: 4         # pairs with fewer points than this auto-reject
 fusion_global_consolidation_max_sweeps: 20  # safety cap on the post-scan merge-until-fixpoint loop
 

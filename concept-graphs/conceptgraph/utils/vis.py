@@ -627,13 +627,14 @@ def _annotate_numbered_masks(image_rgb, masks, labels, ids=None, colors=None, op
         x1, y1, x2, y2 = _place_label((cx, cy), (bw, bh), taken, (w_img, h_img))
         taken.append((x1, y1, x1 + bw, y1 + bh))
 
-        # No background box -- a dark outline stroke behind the white fill keeps the
-        # text legible on light masks without occluding what's underneath.
+        # No background box -- a dark outline stroke behind the mask-colored fill keeps the
+        # text legible and ties the label to its mask's color without occluding what's underneath.
+        color = tuple(int(c) for c in colors[idx])
         text_org = (x1 + 4, y1 + th + 3)
         cv2.putText(annotated, text, text_org,
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA)
         cv2.putText(annotated, text, text_org,
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 
     return annotated
 

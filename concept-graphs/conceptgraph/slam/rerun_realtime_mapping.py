@@ -64,9 +64,9 @@ from conceptgraph.slam.utils import (
     dedup_gobs_by_mask_iou,
     filter_gobs,
     slice_gobs,
-    filter_objects,
     get_bounding_box,
     init_process_pcd,
+    load_prior_scene_objects_as_seeds,
     make_detection_list_from_pcd_and_gobs,
     denoise_objects,
     detections_to_obj_pcd_and_bbox,
@@ -242,6 +242,22 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         # naming, merged) instead of using a fixed classes file -- see
         # discover_scene_vocabulary(). Reuses the sam_predictor/openai_client already
         # set up above; no extra model loading.
+        #
+        # For the "after" variant, also union in the "before" variant's discovered
+        # vocabulary: main() always runs "before" first (same process, same
+        # output_root), so by the time "after" gets here that file already exists
+        # (freshly written or from a cached prior run). This prevents a class that
+        # was already confirmed to exist in the scene from silently missing from
+        # "after" just because its own VLM/SAM discovery pass happened not to
+        # re-surface it.
+        extra_vocab_paths = None
+        if cfg.scene_variant == "after":
+            before_concept_graphs_scene_id = f"{cfg.scene_pair}/concept_graphs/before"
+            before_det_exp_path = get_exp_out_path(
+                cfg.output_root, before_concept_graphs_scene_id, DETECTIONS_EXP_SUFFIX,
+                make_dir=False, exps_dir_name=cfg.exps_dir_name,
+            )
+            extra_vocab_paths = [get_discovered_classes_path(before_det_exp_path)]
         discovered_classes_path = discover_scene_vocabulary(
             dataset=dataset,
             sam_predictor=sam_predictor,
@@ -256,6 +272,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             sam_max_segment_area_ratio=cfg.discovery_sam_max_segment_area_ratio,
             sam_max_segments_per_frame=cfg.discovery_sam_max_segments_per_frame,
             device=cfg.device,
+            extra_vocab_paths=extra_vocab_paths,
         )
         # discover_scene_vocabulary's SAM "segment everything" pass can reserve
         # large allocator blocks (many masks/frame); release what's unused before
@@ -301,6 +318,44 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             skip_bg=detections_exp_cfg['skip_bg'],
         )
         print("\n".join([f"NOT Running detections... version: {VERSION_TEXT}"] * 10))
+
+    # For the "after" variant, seed `objects` with the "before" variant's final,
+    # trusted, non-background objects as initial fusion candidates -- see
+    # load_prior_scene_objects_as_seeds. Each seed starts at num_detections=0 (no
+    # real evidence from this scan yet) and only participates in the same
+    # bbox/point-overlap/normal-consistency gates fuse_detections_geometry_only
+    # already applies to every object; if the physical object is genuinely still
+    # there, real per-frame detections merge into it over the course of the scan
+    # (num_detections>0). Any seed still at num_detections==0 once the frame loop
+    # ends is dropped (see below, right before global_geometry_consolidation) --
+    # a seed must never itself count as "found" in this scan, or a removed/moved
+    # object would misreport as unchanged in the before/after comparison.
+    if cfg.scene_variant == "after":
+        before_concept_graphs_scene_id = f"{cfg.scene_pair}/concept_graphs/before"
+        before_exp_out_path = get_exp_out_path(
+            cfg.output_root, before_concept_graphs_scene_id, EXP_SUFFIX,
+            make_dir=False, exps_dir_name=cfg.exps_dir_name,
+        )
+        before_pcd_path = before_exp_out_path / f"pcd_{EXP_SUFFIX}.pkl.gz"
+        if not before_pcd_path.exists():
+            raise FileNotFoundError(
+                f"No 'before' ConceptGraph found at {before_pcd_path}. The 'after' "
+                f"variant seeds its initial objects from 'before's final map, so "
+                f"'before' must be built first (main() already does this by "
+                f"running variants in ('before', 'after') order)."
+            )
+        prior_seeds = load_prior_scene_objects_as_seeds(
+            prior_pcd_path=before_pcd_path,
+            obj_classes=obj_classes,
+            downsample_voxel_size=cfg['downsample_voxel_size'],
+            dbscan_remove_noise=cfg['dbscan_remove_noise'],
+            dbscan_eps=cfg['dbscan_eps'],
+            dbscan_min_points=cfg['dbscan_min_points'],
+            spatial_sim_type=cfg['spatial_sim_type'],
+        )
+        print(f"Seeded {len(prior_seeds)} objects from 'before' scan as fusion candidates for 'after'.")
+        objects = MapObjectList(prior_seeds)
+        map_edges.update_objects_list(objects)
 
     save_hydra_config(cfg, exp_out_path)
     save_hydra_config(detections_exp_cfg, exp_out_path, is_detection_config=True)
@@ -746,20 +801,6 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 objects=objects
             )
 
-        # Filtering
-        if processing_needed(
-            cfg["filter_interval"],
-            cfg["run_filter_final_frame"],
-            frame_idx,
-            is_final_frame,
-        ):
-            objects = filter_objects(
-                obj_min_points=cfg['obj_min_points'], 
-                obj_min_detections=cfg['obj_min_detections'], 
-                objects=objects,
-                map_edges=map_edges
-            )
-
         write_progressive_fused_mask()
 
         if cfg.save_objects_all_frames:
@@ -810,6 +851,21 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         print(f"SAM speckle cleanup (mask_min_component_ratio="
               f"{cfg.mask_min_component_ratio}): removed {speckle_components_removed} "
               f"components / {speckle_pixels_removed} px from {speckle_masks_touched} masks")
+
+    # The only object ever created with num_detections==0 is a "before"-seeded
+    # object (see load_prior_scene_objects_as_seeds) that no real detection merged
+    # into over the whole scan -- every organically-detected object starts at
+    # num_detections=1. Drop those here, once, before global_geometry_consolidation
+    # gets a chance to run, so an unconfirmed seed can never spuriously absorb an
+    # unrelated real object during consolidation. No other filtering (point count,
+    # detection count) is applied -- a seed that WAS confirmed (num_detections>0) is
+    # by now indistinguishable from an organically-created object either way.
+    n_before_drop = len(objects)
+    objects = MapObjectList(obj for obj in objects if obj['num_detections'] != 0)
+    map_edges.update_objects_list(objects)
+    if n_before_drop != len(objects):
+        print(f"Dropped {n_before_drop - len(objects)} unconfirmed 'before'-seeded objects "
+              f"(no real detection merged into them this scan).")
 
     # No periodic merging happens during the scan, so object-object merging happens
     # here, once, over the surviving objects -- repeated until a full sweep finds no

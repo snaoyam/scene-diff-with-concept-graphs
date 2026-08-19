@@ -424,6 +424,7 @@ def discover_scene_vocabulary(
     sam_max_segment_area_ratio,
     sam_max_segments_per_frame,
     device,
+    extra_vocab_paths=None,
 ):
     """
     Discovers a per-scene-variant object vocabulary to replace a fixed classes
@@ -437,6 +438,12 @@ def discover_scene_vocabulary(
     The representative frame list is cached under representative_frames_path
     (reused verbatim on a later call with the same det_exp_path, even if the
     VLM/SAM naming is redone) so it can be inspected/reused later.
+
+    extra_vocab_paths: optional iterable of discovered_classes.txt-style files
+    (one class name per line) whose contents are unioned into this scene
+    variant's own discovery before writing -- used to carry the "before" scan's
+    vocabulary into the "after" scan so a class the after-scan's own VLM/SAM
+    pass happens to miss doesn't silently drop out of the detector's vocabulary.
     """
     det_exp_path.mkdir(parents=True, exist_ok=True)
     discovered_classes_path = get_discovered_classes_path(det_exp_path)
@@ -506,6 +513,12 @@ def discover_scene_vocabulary(
             "segment_masks_total": int(len(masks)),
             "segment_objects_kept": len(segment_names),
         }
+
+    for extra_path in (extra_vocab_paths or []):
+        extra_path = Path(extra_path)
+        if extra_path.exists():
+            with open(extra_path, "r") as f:
+                discovered.update(line.strip() for line in f)
 
     discovered_classes = sorted({c.strip().lower() for c in discovered if c.strip()})
 

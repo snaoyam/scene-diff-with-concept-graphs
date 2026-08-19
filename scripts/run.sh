@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+CUDA_VISIBLE_DEVICES=6 #always use only GPU=6 and do not use any other GPU nodes
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 timestamp="$(date '+%Y-%m-%d_%H-%M-%S')"
 
@@ -18,7 +18,9 @@ else
 fi
 
 ISOLATED_RUN_DIR="$SCRIPT_DIR/../.isolated-runs"
-if [[ -d "$ISOLATED_RUN_DIR/venv" ]]; then
+if [[ "$ISOLATED_RUN" == "0" ]]; then
+    echo "ISOLATED_RUN=0 -- skipping isolated snapshot, using original environment"
+elif [[ -d "$ISOLATED_RUN_DIR/venv" ]]; then
     ISOLATED_RUN_DIR="$(cd "$ISOLATED_RUN_DIR" && pwd)"
     echo "isolated code snapshot detected at $ISOLATED_RUN_DIR -- using it (run ./scripts/setup.sh to refresh)"
     export PATH="$ISOLATED_RUN_DIR/venv/bin:$PATH"

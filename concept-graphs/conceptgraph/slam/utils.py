@@ -1,7 +1,9 @@
 from collections import Counter
 import copy
+import gzip
 import json
 import logging
+import pickle
 from pathlib import Path
 # from conceptgraph.utils.logging_metrics import track_denoising,
 from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker
@@ -202,7 +204,14 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     # Attributes to be explicitly handled
     extend_attributes = ['image_idx', 'mask_idx', 'color_path', 'class_id', 'mask', 'xyxy', 'conf', 'contain_number', 'captions']
     add_attributes = ['num_detections', 'num_obj_in_class']
-    skip_attributes = ['id', 'class_name', 'is_background', 'new_counter', 'curr_obj_num', 'inst_color']  # 'inst_color' just keeps obj1's
+    # 'is_seeded_prior'/'seed_source_before_id' (load_prior_scene_objects_as_seeds):
+    # obj2 can itself be a seed here, not just obj1 -- fuse_detections_geometry_only
+    # bridges multiple matched candidates into one anchor, and a seed can be one of the
+    # OTHER candidates being folded in, not only the anchor. Skipping them means obj1
+    # keeps its own seed status (or lack of it) regardless of obj2's; the fields exist
+    # only for post-hoc traceability and are never read to make a fusion decision.
+    skip_attributes = ['id', 'class_name', 'is_background', 'new_counter', 'curr_obj_num', 'inst_color',
+                        'is_seeded_prior', 'seed_source_before_id']  # 'inst_color' just keeps obj1's
     custom_handled = ['pcd', 'bbox', 'clip_ft', 'dino_ft', 'clip_ft_mean', 'dino_ft_mean', 'text_ft', 'n_points']
 
     # Check for unhandled keys and throw an error if there are
@@ -504,34 +513,6 @@ def denoise_objects(
         logging.debug(f"before denoising: {len(og_object_pcd.points)}, after denoising: {len(objects[i]['pcd'].points)}")
     logging.debug(f"Finished denoising with {len(objects)} objects")
     return objects
-
-# @profile
-def filter_objects(
-    obj_min_points: int, 
-    obj_min_detections: int, 
-    objects: MapObjectList, 
-    map_edges: MapEdgeMapping = None
-):
-    print("Before filtering:", len(objects))
-    objects_to_keep = []
-    new_index_map = {}  # Maps old indices to new indices if edges are provided
-
-    # Identify which objects to keep
-    for index, obj in enumerate(objects):
-        if len(obj["pcd"].points) >= obj_min_points and obj["num_detections"] >= obj_min_detections:
-            objects_to_keep.append(obj)
-            if map_edges is not None:
-                new_index_map[index] = len(objects_to_keep) - 1
-
-    # Create a new MapObjectList from the kept objects
-    new_objects = MapObjectList(objects_to_keep)
-    print("After filtering:", len(new_objects))
-
-    # Update edges if provided
-    if map_edges and new_index_map:
-        map_edges.update_indices(new_index_map, new_objects)
-
-    return new_objects
 
 # @profile
 def merge_objects(
@@ -873,8 +854,121 @@ def make_detection_list_from_pcd_and_gobs(
         tracker.curr_class_count[curr_class_name] += 1
         tracker.total_object_count += 1
         tracker.brand_new_counter += 1
-    
+
     return detection_list # , bg_detection_list
+
+
+def load_prior_scene_objects_as_seeds(
+    prior_pcd_path,
+    obj_classes,
+    downsample_voxel_size,
+    dbscan_remove_noise,
+    dbscan_eps,
+    dbscan_min_points,
+    spatial_sim_type,
+):
+    '''
+    Loads a previously-built scene variant's final object list (e.g. "before", for
+    the "after" variant currently being scanned) and reconstructs its trusted,
+    non-background objects as seed candidates for this scan's geometry-only fusion.
+
+    A seed only carries geometry/appearance/class identity forward -- num_detections
+    starts at 0 and image_idx/mask/xyxy/etc start empty, exactly like a real
+    detection dict except with zero detections instead of one. It participates in
+    the same bbox/point-overlap/normal-consistency gates as any accumulated object
+    (see geometric_fusion.fuse_detections_geometry_only), so a real per-frame
+    detection either merges into it (num_detections becomes >0, extend_attributes
+    get populated -- the object behaves as if it had always been in `objects`) or
+    doesn't (the physical object moved/is gone, or the detector never proposed
+    anything there). Either way num_detections is the ground truth of whether this
+    scan itself ever re-confirmed the object -- the caller MUST drop any seed still
+    at num_detections==0 before this scan's objects are treated as final, or an
+    unconfirmed seed would misrepresent a removed/moved object as still present.
+
+    Loaded objects only ever supply geometry/pcd_np, pcd_color_np, clip_ft, dino_ft,
+    clip_ft_mean, dino_ft_mean, class_name -- pcd/bbox are not stored in the saved
+    file (see MapObjectList.to_serializable) and are rebuilt here the same way a
+    fresh detection's are (init_process_pcd + get_bounding_box), with normals left
+    unset so they're computed lazily the same way a real new object's are.
+    '''
+    global tracker
+
+    with gzip.open(prior_pcd_path, "rb") as f:
+        data = pickle.load(f)
+
+    classes_arr = obj_classes.get_classes_arr()
+    seeds = DetectionList()
+    for obj in data["objects"]:
+        if obj.get("is_background", False):
+            continue
+        # Default True mirrors convert_concept_graphs_to_scene_diff_benchmark_data.py's
+        # own obj.get("recognition_trusted", True) -- an object never subjected to the
+        # recognition-confidence pass (cfg.compute_recognition_confidence=False) is
+        # trusted by default rather than being silently excluded from seeding.
+        if not obj.get("recognition_trusted", True):
+            continue
+
+        class_name = obj["class_name"]
+        try:
+            class_id = classes_arr.index(class_name)
+        except ValueError:
+            logging.warning(
+                f"load_prior_scene_objects_as_seeds: prior object class "
+                f"'{class_name}' not found in this scan's vocabulary; skipping seed."
+            )
+            continue
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(np.asarray(obj["pcd_np"]))
+        pcd.colors = o3d.utility.Vector3dVector(np.asarray(obj["pcd_color_np"]))
+        pcd = init_process_pcd(pcd, downsample_voxel_size, dbscan_remove_noise, dbscan_eps, dbscan_min_points)
+        if len(pcd.points) == 0:
+            continue
+        bbox = get_bounding_box(spatial_sim_type, pcd)
+
+        num_obj_in_class = tracker.curr_class_count[class_name]
+
+        seed = {
+            'id': uuid.uuid4(),
+            'image_idx': [],
+            'mask_idx': [],
+            'color_path': [],
+            'class_name': class_name,
+            'class_id': [class_id],
+            'captions': [],
+            'num_detections': 0,
+            'mask': [],
+            'xyxy': [],
+            'conf': [],
+            'n_points': len(pcd.points),
+            'contain_number': [],
+            'inst_color': np.random.rand(3),
+            'is_background': False,
+
+            'pcd': pcd,
+            'bbox': bbox,
+            'clip_ft': to_tensor(obj['clip_ft']),
+            'dino_ft': to_tensor(obj['dino_ft']),
+            'clip_ft_mean': to_tensor(obj['clip_ft_mean']),
+            'dino_ft_mean': to_tensor(obj['dino_ft_mean']),
+            'num_obj_in_class': num_obj_in_class,
+            'curr_obj_num': tracker.total_object_count,
+            'new_counter': tracker.brand_new_counter,
+
+            # Seed-only bookkeeping, consumed by rerun_realtime_mapping.py's "after"
+            # branch to drop still-unconfirmed seeds, and left on confirmed objects
+            # for later analysis. merge_obj2_into_obj1 only validates obj2's (the
+            # incoming real detection's) keys, so these extra keys on a seed acting
+            # as obj1 pass through untouched by every merge.
+            'is_seeded_prior': True,
+            'seed_source_before_id': obj['id'],
+        }
+        seeds.append(seed)
+
+        tracker.curr_class_count[class_name] += 1
+        tracker.total_object_count += 1
+
+    return seeds
 
 # @profile
 def dynamic_downsample(points, colors=None, target=5000):
