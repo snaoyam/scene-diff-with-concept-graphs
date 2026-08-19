@@ -108,7 +108,7 @@ dino_mask_erosion_px: 5
 min_points_threshold: 16 # projected and sampled pcd with less points will be skipped
 
 # Same-scan object fusion (see slam/geometric_fusion.py): 3D bbox gate -> association
-# gate (strong/weak, both 3D nearest-neighbour point ratios), then merge every STRONG
+# gate (strong/weak, see fusion_association_gate_mode), then merge every STRONG
 # match (so a new observation can bridge nodes an earlier frame split apart) plus the
 # single closest weak one. No periodic merge pass during the scan; a single global
 # consolidation runs after the last frame instead. clip_ft/dino_ft/text_ft are never
@@ -154,30 +154,36 @@ fusion_visibility_depth_tolerance: 0.05 # z-buffer slack [m] for the occlusion t
 fusion_min_visible_points: 16          # fewer visible object points than this carries no evidence, so
                                         # the pair falls back to the 3D strong ratio alone
 
-# Both association directions are 3D nearest-neighbour point ratios (fraction of one cloud
-# within fusion_point_distance_factor * downsample_voxel_size of the other) -- see
-# slam/geometric_fusion.py's module docstring. A 2D variant (intersecting the detection's mask
-# with the object's points projected into this frame) was tried and reverted: it fixed 3D's
-# sideways leaking (measured on living_room_17 -- the weak direction scored 0.28-0.49 for the
-# sofa against a handbag resting on it in every frame, and 0.90 once the frame border cropped
-# the bag down to its contact band, which destroyed that node) but broke "before"-scan-seeded
-# objects (slam/utils.py's load_prior_scene_objects_as_seeds): a thin new object placed flush
-# against a seeded surface (e.g. a book on a previously-bare desk) can read as within the
-# occlusion test's noise tolerance rather than genuinely occluding, so the seed's stale
-# footprint keeps covering the new object's mask and swallows its detection into the old node.
-# The 3D ratio has no such blind spot -- a point only counts as covered when a real point of
-# the other cloud is actually nearby, camera or no camera. To keep the sideways-leak risk that
-# comes back with it rare in practice, a detection's own points are first restricted to
-# geometric_fusion._eroded_mask_subset -- this frame's own SAM mask, eroded inward by tau
-# (this frame's own depth/camera only, so it carries none of the cross-scan risk the reverted
-# 2D approach had) -- before either direction's overlap is computed, so the boundary points
-# where a touching-but-different object is most likely to land within tau never enter the
-# search at all.
+# How BOTH association directions are measured.
+#   projection -- (default) intersect the detection's 2D mask with the node's projected
+#                 footprint once, then read strong and weak off it by dividing by
+#                 |mask(D)| and |footprint(O)|. Sideways leakage across genuinely
+#                 different-but-touching objects (a blanket draped on a sofa, a pillow
+#                 resting on a cushion -- their 3D points can sit within tau of each other
+#                 over a large contact area, not just a thin rim) is impossible on screen:
+#                 a point a centimetre to the side lands on a different pixel/mask.
+#                 Blind spot: a "before"-scan-seeded object's stale footprint (slam/utils.py's
+#                 load_prior_scene_objects_as_seeds) can still swallow a new thin object
+#                 placed flush against it, since the occlusion test's tolerance can't always
+#                 tell "the same surface" from "something new sitting on top of it".
+#   point_3d   -- nearest-neighbour ratios in 3D (fraction of one cloud within
+#                 fusion_point_distance_factor * downsample_voxel_size of the other), no
+#                 camera involved. Fixes the seeded-surface blind spot above, at the cost of
+#                 reopening the sideways-leak risk projection was built to close. This is
+#                 also the automatic fallback whenever projection can't be formed (no view,
+#                 or too few of the object's points fall in this frame's frustum) --
+#                 geometric_fusion._eroded_mask_subset trims the detection's own mask-boundary
+#                 points first in that fallback case, but does not help the sideways leak in
+#                 general (a small object whose ENTIRE mask sits near another's boundary, not
+#                 just its edge, still leaks) and does not help the seeded-surface blind spot
+#                 at all (that's a projection-mode-only failure).
+fusion_association_gate_mode: projection
 
-# Closing radius for the projected footprint used by projected_footprint() (visualization's
-# fused_masks/ "-r" reprojection overlay, and cross-scan visibility counting for
-# recognition-confidence and the before/after benchmark comparison) -- not used by the
-# association gates above, as a multiple of one voxel's pixel footprint:
+# Closing radius for the projected footprint used by projected_footprint() -- the
+# association gate above (projection mode), visualization's fused_masks/ "-r" reprojection
+# overlay, and cross-scan visibility counting for recognition-confidence and the
+# before/after benchmark comparison all share it -- as a multiple of one voxel's pixel
+# footprint:
 #   radius[px] = this * fx * downsample_voxel_size / z   (median over the visible points)
 # Closing fills the gaps voxel downsampling leaves (a detection's own cloud covers ~3% of its own
 # mask) without moving the outer silhouette. Deriving the radius rather than fixing it in pixels

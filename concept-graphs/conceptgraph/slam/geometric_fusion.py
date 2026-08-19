@@ -17,70 +17,59 @@ note that used to be here -- and it was actively rejecting genuine matches betwe
 different faces of the same large object, e.g. a cabinet's front and side panel, whose
 local normals legitimately differ. That fragmented single large objects into one node
 per face. No replacement for the angled-surface-mismatch protection it did also
-provide has been added back yet -- see the module's remaining leak discussion below.)
+provide has been added back yet.)
 
-Both directions are 3D nearest-neighbour point ratios (see _directional_overlap):
+Both directions come from ONE screen-space intersection of the detection's 2D mask with
+the object's projected footprint, differing only in the denominator (ASSOCIATION_MODE_
+PROJECTION, the default -- see _association_by_projection):
 
-    strong = #{p in D    : min_{q in O}    ||p-q|| < tau} / |D|     "how much of D is O?"
-    weak   = #{p in O_vis : min_{q in D}    ||p-q|| < tau} / |O_vis| "how much of O is in D?"
+    strong = |mask(D) & footprint(O_vis)| / |mask(D)|            "how much of D is O?"
+    weak   = |mask(D) & footprint(O_vis)| / |footprint(O_vis)|   "how much of O is in D?"
 
-O_vis restricts the weak direction to the object's points this camera should have seen
-(frustum + z-buffer against the frame's own depth map, _visible_point_mask) -- otherwise
-an object mostly out of frame could never be "covered enough" by a detection of just its
-visible slice.
+footprint(O_vis) projects the object's points that this camera should have seen (frustum
++ z-buffer against the frame's own depth map, _visible_point_mask) and closes the scatter
+into an area (projected_footprint); mask(D) needs no projection at all, being this
+frame's actual segmentation.
 
 Neither direction suffices alone. strong fails whenever a detection reveals surface the
 object has not accumulated yet (walking around a table), spawning a duplicate node per
 viewpoint. weak fails whenever a 2D mask covers only part of the object -- which is why
-O_vis is restricted to what was visible from here.
+the footprint is restricted to what was visible from here.
 
-A 2D screen-space variant of both ratios (projecting the object's points into this
-frame and intersecting with the detection's own mask, rather than a 3D nearest-neighbour
-search) was tried and then reverted. It fixed one failure mode -- "some point of the
-other cloud lies within tau" is weak evidence, and on screen a point a centimetre to the
-side lands on a different pixel/mask, so sideways leakage across genuinely different
-objects became impossible -- but it introduced a worse one for a "before"-scan-seeded
-object (see load_prior_scene_objects_as_seeds in slam/utils.py): the object's projected
-footprint is only excluded where the frustum/z-buffer occlusion test says something is in
-front of it, and that test's tolerance is sized for ordinary reconstruction noise, not for
-telling "the same surface" apart from "a new thin object now sitting flush against it".
-A book placed on a previously-bare desk could read as merely occluding-within-tolerance
-rather than occluding outright, so the desk seed's stale footprint (built when the desk
-was bare) would still cover the book's screen area and swallow the book's own detection
-into the desk node -- exactly the kind of added object this pipeline exists to catch. The
-3D nearest-neighbour ratio has no such blind spot: a point only counts as covered when a
-real point of the other cloud is actually within tau of it, camera or no camera, so a
-book sitting even a couple centimetres above the desk surface simply has no nearby desk
-point to match.
+A pure-3D nearest-neighbour variant of both ratios (ASSOCIATION_MODE_POINT_3D --
+counting a point as "covered" whenever some point of the other cloud lies within tau,
+with no camera/projection involved at all) was tried in between and reverted back to
+this projection-based default. It has a real advantage for a "before"-scan-seeded object
+(see load_prior_scene_objects_as_seeds in slam/utils.py): projection's occlusion test
+is tolerance-based and can't always tell "the same surface" apart from "a new thin
+object now sitting flush against it" (e.g. a book on a previously-bare desk seed), so a
+seed's stale footprint can swallow the new object's own detection where a pure 3D check
+wouldn't. But 3D reopened a worse, more common problem: "some point of the other cloud
+lies within tau" is weak evidence, and on screen a point a centimetre to the side lands
+on a different pixel/mask, so sideways leakage across genuinely different-but-touching
+objects (a blanket draped on a sofa, a pillow resting on a cushion) was impossible under
+projection and came back under 3D -- see the leak discussion below, which is what this
+reverts to fixing. The seed/thin-object-on-seed risk 3D was covering is back as a known
+gap; _eroded_mask_subset (still used by the 3D fallback paths described below) does not
+help it, since that trims the DETECTION's own mask boundary, not the SEED's stale
+footprint.
 
-That means the specific leaks the 2D variant was built to fix are back, and are the risk
-to watch for when this cascade misbehaves. "Some point of the other cloud lies within
-tau" IS weaker evidence than pixel containment:
+Sideways leakage on screen is impossible in principle -- a point a centimetre to the
+side of a genuinely different object lands on a different pixel, which belongs to a
+different mask -- but the two remaining fallback paths still use the 3D ratio and so
+still carry its leak risk:
 
-  * weak can leak. For an object resting on a surface, its rim and the host surface
-    immediately beside it both sit inside tau, so a host detection can score high against
-    every small object resting on it -- worst when the frame border crops a small object
-    (e.g. a handbag) down to just its contact band with the surface, since then almost
-    every point of that sliver is near the surface.
-  * strong can leak more mildly, the same direction. A large node's cloud is dense enough
-    that a small detection clipped by the frame border can find something within tau
-    almost anywhere near the node's boundary.
+  * No `view` at all, or too few of the object's points fall in this frame's frustum to
+    mean anything (has_view is False) -- the projection route is unavailable and the 3D
+    D->O ratio alone decides.
+  * `_association_by_projection` itself fails to form a footprint (object not visible
+    this frame, or a shape mismatch) even though has_view was True.
 
-Both leaks live specifically in the detection's own points nearest its mask boundary --
-exactly where a touching-but-different object's points are most likely to land within
-tau. _eroded_mask_subset trims those points out before either direction's overlap is
-computed: this frame's own SAM mask, eroded inward by tau (converted to pixels via this
-detection's own depth/camera, so unlike the reverted 2D association gate it carries none
-of the cross-scan risk -- it's this frame's own fresh mask and depth, nothing stored from
-elsewhere). What's merged in on a confirmed match is still the detection's full,
-un-eroded geometry; only the gate's own overlap computation sees the trimmed version.
-
-Sideways leakage -- a point a centimetre to the side of a genuinely different object --
-is still possible for whatever survives erosion (a small object whose ENTIRE mask sits
-near another object's boundary, not just its edge, won't be helped by trimming the
-edge). tau/point_overlap_thresh are what's left to keep that rare; the fusion_debug
-log's gate_class plus overlap ratios are where to look first if a node turns out to have
-swallowed a neighbour it shouldn't have.
+For these fallback cases, _eroded_mask_subset restricts the detection's own points to
+this frame's SAM mask eroded inward by tau (this frame's own depth/camera only, no
+cross-scan risk) before the 3D ratio is computed, trimming boundary points -- the same
+mitigation the 3D-only design relied on, kept here as a strictly-improving safety net
+for a path that's now secondary rather than the primary decision-maker.
 
 The two directions also carry different authority, which is why the merge policy is
 asymmetric. A strong match asserts the detection IS substantially that object, so several
@@ -112,6 +101,10 @@ from tqdm import trange
 from conceptgraph.slam.slam_classes import DetectionList, MapObjectList
 from conceptgraph.slam.utils import from_intrinsics_matrix, get_bounding_box, merge_obj2_into_obj1
 
+# How BOTH association directions are measured (see the module docstring).
+ASSOCIATION_MODE_PROJECTION = "projection"  # 2D: one screen-space intersection, two denominators (default)
+ASSOCIATION_MODE_POINT_3D = "point_3d"      # 3D: nearest-neighbour ratios, kept for comparison/fallback
+
 # reason codes written into the debug jsonl
 REASON_TOO_FEW_POINTS = "too_few_points"
 REASON_BBOX_REJECT = "bbox_reject"
@@ -136,7 +129,8 @@ class GeometryFusionParams:
     min_points_for_gates: int
     visibility_depth_tolerance: float   # z-buffer slack [m] for the occlusion test
     min_visible_points: int             # below this, the containment direction carries no evidence
-    projection_close_factor: float      # closing radius = factor * fx * voxel / z  [px] -- projected_footprint() only (visualization, cross-visibility); not used by the association gates
+    association_gate_mode: str          # ASSOCIATION_MODE_PROJECTION (default) | ASSOCIATION_MODE_POINT_3D
+    projection_close_factor: float      # closing radius = factor * fx * voxel / z  [px]
     max_sweeps: int
     # recognition-trust thresholds, applied by annotate_recognition_trust() after
     # compute_recognition_confidence() has populated the fields it reads. Both are
@@ -162,6 +156,7 @@ def geometry_fusion_params_from_cfg(cfg) -> GeometryFusionParams:
         min_points_for_gates=int(cfg['fusion_min_points_for_gates']),
         visibility_depth_tolerance=float(cfg['fusion_visibility_depth_tolerance']),
         min_visible_points=int(cfg['fusion_min_visible_points']),
+        association_gate_mode=str(cfg['fusion_association_gate_mode']),
         projection_close_factor=float(cfg['fusion_projection_close_factor']),
         max_sweeps=int(cfg['fusion_global_consolidation_max_sweeps']),
         recognition_min_recognized_frames=int(cfg['recognition_min_recognized_frames']),
@@ -504,14 +499,19 @@ def _eroded_mask_subset(det, det_pcd, view: "FrameView", params: GeometryFusionP
 
 class _VisibilityCache:
     '''
-    Per-frame memo of "which points of this object should this camera have seen".
-    Depends only on the object's geometry and the camera, so it's the same for every
-    detection in the frame; without this it would be recomputed once per (detection,
-    candidate) pair.
+    Per-frame memo of "which points of this object should this camera have seen" and
+    "where does it land on screen". Both depend only on the object's geometry and the
+    camera, so they are the same for every detection in the frame; without this they
+    would be recomputed once per (detection, candidate) pair.
 
     Keyed by id(pcd) while holding a reference to that pcd, so the id cannot be
     recycled onto a different cloud. A merge replaces obj['pcd'] with the new cloud
-    process_pcd() returns, so merged geometry simply misses the cache.
+    process_pcd() returns, so merged geometry simply misses the cache. The reference is
+    load-bearing, not incidental: without it nothing here keeps the point cloud alive,
+    a freed pcd's memory can get reused by an unrelated later allocation with the same
+    id(), and mask_for()/footprint_for() would then silently hand back arrays sized for
+    the wrong cloud (an IndexError deep inside _directional_overlap's src_subset
+    indexing, not here, is what that looks like from the caller's side).
     '''
 
     def __init__(self, view: FrameView, params: GeometryFusionParams):
@@ -519,21 +519,79 @@ class _VisibilityCache:
         self.params = params
         self._entries = {}
 
-    def mask_for(self, pcd):
-        if self.view is None:
-            return None
+    def _entry(self, pcd):
         entry = self._entries.get(id(pcd))
         if entry is None:
-            # Stored WITH a reference to pcd itself, not just `visible` -- otherwise
-            # nothing here keeps the point cloud alive, a freed pcd's memory can get
-            # reused by an unrelated later allocation with the same id(), and mask_for()
-            # would then silently hand back a `visible` array sized for the wrong
-            # cloud (an IndexError deep inside _directional_overlap's src_subset
-            # indexing, not here, is what that looks like from the caller's side).
-            visible = _visible_point_mask(_points(pcd), self.view, self.params)
-            entry = (pcd, visible)
+            pts = _points(pcd)
+            visible = _visible_point_mask(pts, self.view, self.params)
+            footprint, _, radius = projected_footprint(pts, self.view, self.params, visible)
+            entry = (pcd, visible, footprint, radius, _project_pixels(pts, visible, self.view))
             self._entries[id(pcd)] = entry
-        return entry[1]
+        return entry
+
+    def mask_for(self, pcd):
+        return None if self.view is None else self._entry(pcd)[1]
+
+    def footprint_for(self, pcd):
+        '''(footprint, closing radius) -- the on-screen area this object occupies.'''
+        return (None, 0) if self.view is None else self._entry(pcd)[2:4]
+
+    def pixels_for(self, pcd):
+        '''(u, v) of the visible points, in visible-point order. Same for every detection.'''
+        return None if self.view is None else self._entry(pcd)[4]
+
+
+def _association_by_projection(det, obj_pcd, params: GeometryFusionParams, view: FrameView,
+                               visibility: "_VisibilityCache", visible, record):
+    '''
+    Both directions from ONE screen-space intersection, differing only in the denominator:
+
+        strong = |mask(D) & footprint(O_vis)| / |mask(D)|          "how much of D does O explain?"
+        weak   = |mask(D) & footprint(O_vis)| / |footprint(O_vis)| "how much of O does D cover?"
+
+    Returns (strong_ratio, weak_ratio, strong_normal_args, weak_normal_args); any of them
+    is None when the projection could not be formed. The last two elements are legacy
+    (pcd_src, pcd_dst, src_idx, dst_idx) correspondence tuples, unused now that the
+    normal-consistency gate is gone, but kept as the return shape evaluate_detection_gates
+    still unpacks.
+
+    mask(D) is this frame's actual SAM mask, so the strong direction needs no reprojection
+    of the detection at all -- it is already the ground truth for "where D is on screen".
+    det['mask'] is a list because merging concatenates it; entry 0 is this frame's mask,
+    the only one that shares a camera with `view`. It comes from gobs after resize_gobs,
+    so it already matches the depth map's dimensions.
+    '''
+    masks = det.get('mask')
+    if not masks:
+        return None, None, None, None
+    det_mask = np.asarray(masks[0]).astype(bool)
+
+    det_pcd = det['pcd']
+    obj_pts = _points(obj_pcd)
+    if visibility is not None:
+        footprint, radius = visibility.footprint_for(obj_pcd)
+        u, v = visibility.pixels_for(obj_pcd)
+    else:
+        footprint, _, radius = projected_footprint(obj_pts, view, params, visible)
+        u, v = _project_pixels(obj_pts, visible, view)
+    if footprint is None or det_mask.shape != footprint.shape:
+        return None, None, None, None
+
+    footprint_area = int(footprint.sum())
+    mask_area = int(det_mask.sum())
+    record["n_footprint_pixels"] = footprint_area
+    record["n_det_mask_pixels"] = mask_area
+    record["projection_close_radius"] = int(radius)
+    if footprint_area == 0 or mask_area == 0:
+        return None, None, None, None
+
+    intersection = int((footprint & det_mask).sum())
+    weak_ratio = float(intersection) / footprint_area
+    strong_ratio = float(intersection) / mask_area
+    record["weak_projection_ratio"] = weak_ratio
+    record["strong_projection_ratio"] = strong_ratio
+
+    return strong_ratio, weak_ratio, None, None
 
 
 def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: FrameView = None,
@@ -546,25 +604,22 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
     The gate takes the better of two directions -- see the module docstring for why
     neither suffices alone:
 
-      strong  "how much of this detection does that object explain?"      (det -> obj)
-      weak    "how much of that object does this detection cover?"  (obj's visible pts -> det)
+      strong  "how much of this detection does that object explain?"
+      weak    "how much of that object does this detection cover?"
 
-    Both are 3D nearest-neighbour point ratios (_directional_overlap); the weak
-    direction is restricted to the object's points this camera should have seen
-    (view/visibility), so a mostly-out-of-frame object isn't penalised for the parts
-    no viewpoint here could cover. With no `view`, or too few visible points to mean
-    anything, the weak direction is unavailable and the strong D->O ratio alone
-    decides.
-
-    Wherever det_pcd's points are used (either direction), they're first restricted to
+    Under ASSOCIATION_MODE_PROJECTION (the default) both come from one screen-space
+    intersection of the detection's 2D mask with the object's projected footprint,
+    differing only in the denominator. Under ASSOCIATION_MODE_POINT_3D, or whenever
+    projection can't be formed (no `view`, or too few of the object's points fall in
+    this frame's frustum to mean anything), both are 3D nearest-neighbour point ratios
+    (_directional_overlap) instead -- see the module docstring for the risk that mode
+    carries. For that 3D fallback, det_pcd's points are first restricted to
     _eroded_mask_subset(det, ...) -- this frame's own detection mask, eroded inward by
-    tau -- so points nearest the detection's own boundary, which is exactly where a
-    touching-but-different object's points are most likely to land within tau (the
-    contact-line/band leak -- see the module docstring), never enter the correspondence
-    search at all. This depends only on `det`/`view`/`params`, not `obj`, so a caller
-    evaluating the same detection against many candidate objects should compute it once
-    and pass it in as `det_eroded_idx` rather than paying for cv2.erode + reprojection
-    again per candidate; left as None here only for standalone/direct callers.
+    tau -- so points nearest the detection's own boundary don't enter the search. This
+    depends only on `det`/`view`/`params`, not `obj`, so a caller evaluating the same
+    detection against many candidate objects should compute it once and pass it in as
+    `det_eroded_idx` rather than paying for cv2.erode + reprojection again per
+    candidate; left as None here only for standalone/direct callers.
 
     `gate_class` on a passing record says which direction earned the pass; the caller uses
     it to apply "merge every strong match, but only the closest weak one".
@@ -574,7 +629,12 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
         "overlap_det_to_obj": 0.0,
         "overlap_obj_to_det": 0.0,
         "overlap_visible_obj_to_det": None,
+        "strong_projection_ratio": None,
+        "weak_projection_ratio": None,
         "n_visible_obj_points": 0,
+        "n_footprint_pixels": 0,
+        "n_det_mask_pixels": 0,
+        "projection_close_radius": 0,
         "strong_overlap": 0.0,
         "weak_overlap": None,
         "primary_overlap": 0.0,
@@ -592,9 +652,12 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
     if det_eroded_idx is None:
         det_eroded_idx = _eroded_mask_subset(det, det_pcd, view, params)
 
-    strong_overlap = _directional_overlap(det_pcd, obj_pcd, params, src_subset=det_eroded_idx)[0]
-    record["overlap_det_to_obj"] = strong_overlap
+    # The 3D ratio is always available as the point_3d mode's answer and, under
+    # projection, the fallback for whenever a footprint can't be formed.
+    overlap_d2o = _directional_overlap(det_pcd, obj_pcd, params, src_subset=det_eroded_idx)[0]
+    record["overlap_det_to_obj"] = overlap_d2o
     record["overlap_obj_to_det"] = _directional_overlap(obj_pcd, det_pcd, params, dst_subset=det_eroded_idx)[0]
+    strong_overlap = overlap_d2o
     strong_direction, weak_direction = "det_to_obj", "visible_obj_to_det"
     weak_overlap = None
 
@@ -604,7 +667,13 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
         record["n_visible_obj_points"] = int(visible.sum())
     has_view = visible is not None and record["n_visible_obj_points"] >= params.min_visible_points
 
-    if has_view:
+    if has_view and params.association_gate_mode == ASSOCIATION_MODE_PROJECTION:
+        proj_strong, proj_weak, _, _ = _association_by_projection(det, obj_pcd, params, view, visibility, visible, record)
+        if proj_strong is not None:
+            strong_overlap = proj_strong
+            weak_overlap = proj_weak
+            strong_direction, weak_direction = "projection_det_to_obj", "projection_obj_to_det"
+    elif has_view:
         weak_overlap = _directional_overlap(
             obj_pcd, det_pcd, params, src_subset=np.nonzero(visible)[0], dst_subset=det_eroded_idx)[0]
         record["overlap_visible_obj_to_det"] = weak_overlap

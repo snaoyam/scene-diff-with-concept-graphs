@@ -33,16 +33,23 @@ def _pct(n, total):
 
 
 def _containment(record):
-    '''The weak ("how much of the node does this detection cover?") score -- the 3D
-    nearest-neighbour ratio restricted to the object's points this frame's camera should
-    have seen (O_vis->D). None when there was no usable view for this pair.'''
+    '''
+    The weak ("how much of the node does this detection cover?") score, whichever way the
+    run measured it -- projected area under fusion_association_gate_mode=projection, the
+    3D O_vis->D otherwise. Logs from either mode read the same way here.
+    '''
+    ratio = record.get("weak_projection_ratio")
+    if ratio is not None:
+        return f"proj {ratio:.3f}"
     ratio = record.get("overlap_visible_obj_to_det")
     return "n/a" if ratio is None else f"O_vis->D {ratio:.3f}"
 
 
 def _strength(record):
-    '''The strong ("how much of the detection is this node?") score -- the 3D
-    nearest-neighbour ratio D->O.'''
+    '''The strong ("how much of the detection is this node?") score, same convention.'''
+    ratio = record.get("strong_projection_ratio")
+    if ratio is not None:
+        return ratio
     return record.get("overlap_det_to_obj", 0.0)
 
 
