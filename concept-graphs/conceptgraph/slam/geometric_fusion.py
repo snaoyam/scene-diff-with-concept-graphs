@@ -1,7 +1,8 @@
 '''
-Geometry-only same-scan object fusion (cfg.object_fusion_mode == "geometry_only").
+Geometry-only same-scan object fusion.
 
-Replaces the appearance-influenced association path in rerun_realtime_mapping.py
+Replaces the appearance-influenced association path that used to live in
+rerun_realtime_mapping.py
 (spatial_sim + CLIP visual_sim -> sim_sum -> argmax -> merge_obj_matches, plus the
 periodic CLIP-gated merge_objects()) with a pure-geometry cascade:
 
@@ -74,8 +75,6 @@ from tqdm import trange
 
 from conceptgraph.slam.slam_classes import DetectionList, MapObjectList
 from conceptgraph.slam.utils import from_intrinsics_matrix, get_bounding_box, merge_obj2_into_obj1
-
-GEOMETRY_ONLY_MODE = "geometry_only"
 
 # How BOTH association directions are measured (see the module docstring).
 ASSOCIATION_MODE_PROJECTION = "projection"  # 2D: one screen-space intersection, two denominators

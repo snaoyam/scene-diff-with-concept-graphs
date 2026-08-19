@@ -68,7 +68,6 @@ from conceptgraph.slam.utils import (
     init_process_pcd,
     make_detection_list_from_pcd_and_gobs,
     denoise_objects,
-    merge_objects,
     detections_to_obj_pcd_and_bbox,
     prepare_objects_save_vis,
     process_cfg,
@@ -76,15 +75,7 @@ from conceptgraph.slam.utils import (
     processing_needed,
     resize_gobs
 )
-from conceptgraph.slam.mapping import (
-    compute_spatial_similarities,
-    compute_visual_similarities,
-    aggregate_similarities,
-    match_detections_to_objects,
-    merge_obj_matches
-)
 from conceptgraph.slam.geometric_fusion import (
-    GEOMETRY_ONLY_MODE,
     FrameView,
     FusionDebugWriter,
     compute_recognition_confidence,
@@ -365,20 +356,13 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     fused_masks_out_path = exp_out_path / "fused_masks"
     detected_masks_out_path.mkdir(parents=True, exist_ok=True)
     filtered_masks_out_path.mkdir(parents=True, exist_ok=True)
-    if cfg.save_fused_masks:
-        fused_masks_out_path.mkdir(parents=True, exist_ok=True)
+    fused_masks_out_path.mkdir(parents=True, exist_ok=True)
 
-    # Resolved once per scene (see slam/geometric_fusion.py). Used unconditionally --
-    # not only by geometry-only fusion's own per-frame gating, but also by
-    # write_progressive_fused_mask() below, which reprojects objects with no fresh
-    # detection this frame regardless of which object_fusion_mode is active. In
-    # "appearance" mode, CLIP/DINO features are still extracted and stored below, they
-    # just never take part in the fusion decision.
-    geometry_only_fusion = cfg.object_fusion_mode == GEOMETRY_ONLY_MODE
+    # Resolved once per scene (see slam/geometric_fusion.py). Used both by geometry-only
+    # fusion's own per-frame gating and by write_progressive_fused_mask() below, which
+    # reprojects objects with no fresh detection this frame.
     geo_fusion_params = geometry_fusion_params_from_cfg(cfg)
-    fusion_debug = FusionDebugWriter(
-        exp_out_path / "fusion_debug", enabled=geometry_only_fusion and cfg.fusion_debug_log
-    )
+    fusion_debug = FusionDebugWriter(exp_out_path / "fusion_debug")
 
     # How much SAM speckle the cleanup took out this scan. detected_masks/ draws the
     # cleaned masks, so this summary is the only place the effect is visible.
@@ -672,8 +656,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         )
 
         if len(gobs['mask']) == 0: # no detections in this frame
-            if cfg.save_fused_masks:
-                write_progressive_fused_mask()
+            write_progressive_fused_mask()
             continue
 
         obj_pcds_and_bboxes = measure_time(detections_to_obj_pcd_and_bbox)(
@@ -707,81 +690,28 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         )
 
         if len(detection_list) == 0: # no detections, skip
-            if cfg.save_fused_masks:
-                write_progressive_fused_mask()
+            write_progressive_fused_mask()
             continue
 
-        if geometry_only_fusion:
-            # Geometry-only association: bbox -> directional point overlap -> normal
-            # consistency, fusing with every existing node that passes. No empty-map
-            # special case is needed -- with no objects yet, every detection simply
-            # falls through to "new object".
-            objects = fuse_detections_geometry_only(
-                detection_list=detection_list,
-                objects=objects,
-                params=geo_fusion_params,
-                frame_idx=frame_idx,
-                # Lets the point gate ask what this camera should have seen of each
-                # existing object, so a large or mostly-unobserved object isn't
-                # penalised by the parts no viewpoint could have covered.
-                view=frame_view,
-                debug=fusion_debug,
-            )
-            # These helpers return a new MapObjectList rather than mutating in place,
-            # so map_edges' reference has to follow it (build_final_object_graph
-            # indexes map_edges.objects when adding edges).
-            map_edges.update_objects_list(objects)
-        else:
-            # if no objects yet in the map,
-            # just add all the objects from the current frame
-            # then continue, no need to match or merge
-            if len(objects) == 0:
-                objects.extend(detection_list)
-                tracker.increment_total_objects(len(detection_list))
-                owandb.log({
-                        "total_objects_so_far": tracker.get_total_objects(),
-                        "objects_this_frame": len(detection_list),
-                    })
-                if cfg.save_fused_masks:
-                    write_progressive_fused_mask()
-                continue
-
-            ### compute similarities and then merge
-            spatial_sim = compute_spatial_similarities(
-                spatial_sim_type=cfg['spatial_sim_type'], 
-                detection_list=detection_list, 
-                objects=objects,
-                downsample_voxel_size=cfg['downsample_voxel_size']
-            )
-
-            visual_sim = compute_visual_similarities(detection_list, objects)
-
-            agg_sim = aggregate_similarities(
-                match_method=cfg['match_method'], 
-                phys_bias=cfg['phys_bias'], 
-                spatial_sim=spatial_sim, 
-                visual_sim=visual_sim
-            )
-
-            # Perform matching of detections to existing objects
-            match_indices = match_detections_to_objects(
-                agg_sim=agg_sim, 
-                detection_threshold=cfg['sim_threshold']  # Use the sim_threshold from the configuration
-            )
-
-            # Now merge the detected objects into the existing objects based on the match indices
-            objects = merge_obj_matches(
-                detection_list=detection_list, 
-                objects=objects, 
-                match_indices=match_indices,
-                downsample_voxel_size=cfg['downsample_voxel_size'], 
-                dbscan_remove_noise=cfg['dbscan_remove_noise'], 
-                dbscan_eps=cfg['dbscan_eps'], 
-                dbscan_min_points=cfg['dbscan_min_points'], 
-                spatial_sim_type=cfg['spatial_sim_type'], 
-                device=cfg['device']
-                # Note: Removed 'match_method' and 'phys_bias' as they do not appear in the provided merge function
-            )
+        # Geometry-only association: bbox -> directional point overlap -> normal
+        # consistency, fusing with every existing node that passes. No empty-map
+        # special case is needed -- with no objects yet, every detection simply
+        # falls through to "new object".
+        objects = fuse_detections_geometry_only(
+            detection_list=detection_list,
+            objects=objects,
+            params=geo_fusion_params,
+            frame_idx=frame_idx,
+            # Lets the point gate ask what this camera should have seen of each
+            # existing object, so a large or mostly-unobserved object isn't
+            # penalised by the parts no viewpoint could have covered.
+            view=frame_view,
+            debug=fusion_debug,
+        )
+        # fuse_detections_geometry_only returns a new MapObjectList rather than
+        # mutating in place, so map_edges' reference has to follow it
+        # (build_final_object_graph indexes map_edges.objects when adding edges).
+        map_edges.update_objects_list(objects)
         # fix the class names for objects
         # they should be the most popular name, not the first name
         for idx, obj in enumerate(objects):
@@ -829,48 +759,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 map_edges=map_edges
             )
 
-        # Merging. Skipped entirely in geometry-only mode: online fusion already
-        # merges across multiple nodes per detection, and a single global
-        # consolidation runs after the loop instead of this periodic pass.
-        if not geometry_only_fusion and processing_needed(
-            cfg["merge_interval"],
-            cfg["run_merge_final_frame"],
-            frame_idx,
-            is_final_frame,
-        ):
-            if cfg["make_edges"]:
-                objects, map_edges = measure_time(merge_objects)(
-                    merge_overlap_thresh=cfg["merge_overlap_thresh"],
-                    merge_visual_sim_thresh=cfg["merge_visual_sim_thresh"],
-                    merge_text_sim_thresh=cfg["merge_text_sim_thresh"],
-                    objects=objects,
-                    downsample_voxel_size=cfg["downsample_voxel_size"],
-                    dbscan_remove_noise=cfg["dbscan_remove_noise"],
-                    dbscan_eps=cfg["dbscan_eps"],
-                    dbscan_min_points=cfg["dbscan_min_points"],
-                    spatial_sim_type=cfg["spatial_sim_type"],
-                    device=cfg["device"],
-                    do_edges=True,
-                    map_edges=map_edges
-                )
-            else:
-                objects = measure_time(merge_objects)(
-                    merge_overlap_thresh=cfg["merge_overlap_thresh"],
-                    merge_visual_sim_thresh=cfg["merge_visual_sim_thresh"],
-                    merge_text_sim_thresh=cfg["merge_text_sim_thresh"],
-                    objects=objects,
-                    downsample_voxel_size=cfg["downsample_voxel_size"],
-                    dbscan_remove_noise=cfg["dbscan_remove_noise"],
-                    dbscan_eps=cfg["dbscan_eps"],
-                    dbscan_min_points=cfg["dbscan_min_points"],
-                    spatial_sim_type=cfg["spatial_sim_type"],
-                    device=cfg["device"],
-                    do_edges=False,
-                    map_edges=None
-                )
-
-        if cfg.save_fused_masks:
-            write_progressive_fused_mask()
+        write_progressive_fused_mask()
 
         if cfg.save_objects_all_frames:
             save_objects_for_frame(
@@ -921,17 +810,16 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
               f"{cfg.mask_min_component_ratio}): removed {speckle_components_removed} "
               f"components / {speckle_pixels_removed} px from {speckle_masks_touched} masks")
 
-    # Geometry-only mode does no periodic merging during the scan, so object-object
-    # merging happens here, once, over the surviving objects -- repeated until a full
-    # sweep finds no mergeable pair, recomputing candidates/overlaps whenever a merge
-    # changes an object's geometry.
-    if geometry_only_fusion:
-        objects = measure_time(global_geometry_consolidation)(
-            objects=objects,
-            params=geo_fusion_params,
-            debug=fusion_debug,
-        )
-        map_edges.update_objects_list(objects)
+    # No periodic merging happens during the scan, so object-object merging happens
+    # here, once, over the surviving objects -- repeated until a full sweep finds no
+    # mergeable pair, recomputing candidates/overlaps whenever a merge changes an
+    # object's geometry.
+    objects = measure_time(global_geometry_consolidation)(
+        objects=objects,
+        params=geo_fusion_params,
+        debug=fusion_debug,
+    )
+    map_edges.update_objects_list(objects)
 
     # Every object's geometry is final now, which this metric needs -- run it before
     # objects can change any further and while fusion_debug is still open to log into.
@@ -968,51 +856,50 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     # completed concept graph. fused_masks/ is unrelated to this pass -- it's written
     # progressively inside the main frame loop above (see write_progressive_fused_mask)
     # so it shows the map merging over time instead of only the finished result.
-    if cfg.save_scenegraph_viz:
-        print(f"Rendering final per-frame scene graph visualizations... version: {VERSION_TEXT}")
-        for frame_idx in trange(len(dataset)):
-            color_path = Path(dataset.color_paths[frame_idx])
-            color_tensor, *_ = dataset[frame_idx]
-            image_rgb = color_tensor.cpu().numpy().astype(np.uint8)
+    print(f"Rendering final per-frame scene graph visualizations... version: {VERSION_TEXT}")
+    for frame_idx in trange(len(dataset)):
+        color_path = Path(dataset.color_paths[frame_idx])
+        color_tensor, *_ = dataset[frame_idx]
+        image_rgb = color_tensor.cpu().numpy().astype(np.uint8)
 
-            frame_obj_indices = set()
-            frame_objects = []
-            for obj_idx, obj in enumerate(objects):
-                local_indices = [i for i, idx in enumerate(obj['image_idx']) if idx == frame_idx]
-                if not local_indices:
-                    continue
-                frame_obj_indices.add(obj_idx)
-                # A merge_overlap_objects pass (or a same-frame double match) can fold more
-                # than one raw detection from this frame into the same 3D object -- union
-                # their masks/boxes instead of picking just the first one, so the larger of
-                # the two isn't silently dropped from this frame's viz.
-                combined_mask = np.logical_or.reduce([obj['mask'][i] for i in local_indices])
-                xyxy_stack = np.stack([obj['xyxy'][i] for i in local_indices]).astype(float)
-                combined_xyxy = np.concatenate([xyxy_stack[:, :2].min(axis=0), xyxy_stack[:, 2:].max(axis=0)])
-                frame_objects.append({
-                    'obj_num': obj['curr_obj_num'],
-                    'class_name': obj['class_name'],
-                    'caption': obj['captions'][local_indices[0]].get('caption', '') if obj['captions'] else '',
-                    'mask': combined_mask,
-                    'xyxy': combined_xyxy,
-                })
-
-            if not frame_objects:
+        frame_obj_indices = set()
+        frame_objects = []
+        for obj_idx, obj in enumerate(objects):
+            local_indices = [i for i, idx in enumerate(obj['image_idx']) if idx == frame_idx]
+            if not local_indices:
                 continue
+            frame_obj_indices.add(obj_idx)
+            # A merge_overlap_objects pass (or a same-frame double match) can fold more
+            # than one raw detection from this frame into the same 3D object -- union
+            # their masks/boxes instead of picking just the first one, so the larger of
+            # the two isn't silently dropped from this frame's viz.
+            combined_mask = np.logical_or.reduce([obj['mask'][i] for i in local_indices])
+            xyxy_stack = np.stack([obj['xyxy'][i] for i in local_indices]).astype(float)
+            combined_xyxy = np.concatenate([xyxy_stack[:, :2].min(axis=0), xyxy_stack[:, 2:].max(axis=0)])
+            frame_objects.append({
+                'obj_num': obj['curr_obj_num'],
+                'class_name': obj['class_name'],
+                'caption': obj['captions'][local_indices[0]].get('caption', '') if obj['captions'] else '',
+                'mask': combined_mask,
+                'xyxy': combined_xyxy,
+            })
 
-            frame_edges = [
-                (objects[obj1_idx]['curr_obj_num'], edge.rel_type, objects[obj2_idx]['curr_obj_num'])
-                for (obj1_idx, obj2_idx), edge in map_edges.edges_by_index.items()
-                if obj1_idx in frame_obj_indices and obj2_idx in frame_obj_indices
-            ]
+        if not frame_objects:
+            continue
 
-            render_frame_scenegraph(
-                image_rgb,
-                frame_objects,
-                frame_edges,
-                scenegraph_viz_out_path / f"{color_path.stem}_viz.png",
-                scenegraph_color_cache,
-            )
+        frame_edges = [
+            (objects[obj1_idx]['curr_obj_num'], edge.rel_type, objects[obj2_idx]['curr_obj_num'])
+            for (obj1_idx, obj2_idx), edge in map_edges.edges_by_index.items()
+            if obj1_idx in frame_obj_indices and obj2_idx in frame_obj_indices
+        ]
+
+        render_frame_scenegraph(
+            image_rgb,
+            frame_objects,
+            frame_edges,
+            scenegraph_viz_out_path / f"{color_path.stem}_viz.png",
+            scenegraph_color_cache,
+        )
 
     # Save the pointcloud
     save_pointcloud(
@@ -1039,17 +926,16 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         edges=map_edges
     )
 
-    if cfg.save_scenegraph_full:
-        full_scenegraph = load_scene_graph(
-            exp_out_path / f"obj_json_{EXP_SUFFIX}.json",
-            exp_out_path / f"edge_json_{EXP_SUFFIX}.json",
-        )
-        full_scenegraph_path = render_full_scenegraph(
-            full_scenegraph,
-            exp_out_path / "scenegraph_full.png",
-            title=f"{cfg.scene_id} / {EXP_SUFFIX}",
-        )
-        print(f"Saved full scene graph to {full_scenegraph_path} version: {VERSION_TEXT}")
+    full_scenegraph = load_scene_graph(
+        exp_out_path / f"obj_json_{EXP_SUFFIX}.json",
+        exp_out_path / f"edge_json_{EXP_SUFFIX}.json",
+    )
+    full_scenegraph_path = render_full_scenegraph(
+        full_scenegraph,
+        exp_out_path / "scenegraph_full.png",
+        title=f"{cfg.scene_id} / {EXP_SUFFIX}",
+    )
+    print(f"Saved full scene graph to {full_scenegraph_path} version: {VERSION_TEXT}")
 
     # Save metadata if all frames are saved
     if cfg.save_objects_all_frames:

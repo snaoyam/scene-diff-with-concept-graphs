@@ -47,13 +47,6 @@ device: cuda
 
 use_iou: !!bool True
 spatial_sim_type: overlap # "iou", "giou", "overlap"
-phys_bias: 0.0
-match_method: "sim_sum" # "sep_thresh", "sim_sum"
-# Only when match_method=="sep_thresh"
-semantic_threshold: 0.5
-physical_threshold: 0.5
-# Only when match_method=="sim_sum"
-sim_threshold: 1.2
 
 # For contain_number
 use_contain_number: !!bool False
@@ -111,24 +104,13 @@ dino_mask_erosion_px: 5
 
 min_points_threshold: 16 # projected and sampled pcd with less points will be skipped
 
-# For merge_overlap_objects() function
-merge_overlap_thresh: 0.7      # -1 means do not perform the merge_overlap_objects()
-merge_visual_sim_thresh: 0.7   # Merge only if the visual similarity is larger
-merge_text_sim_thresh: 0.7     # Merge only if the text cosine sim is larger
-
-# Same-scan object fusion mode -- how a new detection is associated with existing
-# map objects (see slam/geometric_fusion.py).
-#   "geometry_only": 3D bbox gate -> association gate (strong/weak, see
-#                    fusion_association_gate_mode) -> surface normal consistency gate,
-#                    then merge every STRONG match (so a new observation can bridge nodes
-#                    an earlier frame split apart) plus the single closest weak one.
-#                    No periodic merge_objects(); a single global consolidation runs
-#                    after the last frame instead. clip_ft/dino_ft/text_ft are never
-#                    consulted for the fusion decision -- they're still extracted and
-#                    stored for the before/after graph matching.
-#   "appearance":    the original spatial_sim + CLIP visual_sim (sim_sum) association
-#                    plus the merge_interval-driven merge_objects() above.
-object_fusion_mode: geometry_only
+# Same-scan object fusion (see slam/geometric_fusion.py): 3D bbox gate -> association
+# gate (strong/weak, see fusion_association_gate_mode) -> surface normal consistency
+# gate, then merge every STRONG match (so a new observation can bridge nodes an earlier
+# frame split apart) plus the single closest weak one. No periodic merge pass during the
+# scan; a single global consolidation runs after the last frame instead. clip_ft/dino_ft/
+# text_ft are never consulted for the fusion decision -- they're still extracted and
+# stored for the before/after graph matching.
 
 fusion_bbox_margin: 0.02               # AABB candidate slack [m]; boxes within this distance
                                         # of each other count as overlapping, absorbing RGB-D
@@ -190,7 +172,6 @@ fusion_normal_consistency_thresh: 0.70 # required fraction of agreeing correspon
 fusion_normal_max_nn: 30               # KDTreeSearchParamHybrid max_nn for estimate_normals
 fusion_min_points_for_gates: 4         # pairs with fewer points than this auto-reject
 fusion_global_consolidation_max_sweeps: 20  # safety cap on the post-scan merge-until-fixpoint loop
-fusion_debug_log: !!bool True          # write <exp_out_path>/fusion_debug/*.jsonl
 
 # After every object's geometry is final, re-walk the whole sequence once more (no
 # detection, just each frame's pose+depth) and for each object ask: over the frames
@@ -328,10 +309,8 @@ obj_pcd_max_points: 5000
 
 denoise_interval: 5           # Run DBSCAN every k frame. This operation is heavy
 filter_interval: 5            # Filter objects that have too few associations or are too small
-merge_interval: 5             # Merge objects based on geometric and semantic similarity
 run_denoise_final_frame: !!bool True
 run_filter_final_frame: !!bool True
-run_merge_final_frame: !!bool True
 
 dbscan_remove_noise: !!bool True
 dbscan_eps: 0.1
@@ -344,7 +323,6 @@ obj_min_detections: 1
 # 2D scene graph overlay visualization: saves one PNG per frame with detections
 # (image + colored mask overlay | node/edge graph diagram) under
 # <exp_out_path>/scenegraph_viz/
-save_scenegraph_viz: !!bool True
 
 # Per-frame overlay of the LIVE fused map, under <exp_out_path>/fused_masks/. Written
 # progressively inside the frame loop (right after each frame's own matching/merging),
@@ -359,9 +337,7 @@ save_scenegraph_viz: !!bool True
 # frame's own depth map, using fusion_visibility_depth_tolerance), and with at least
 # fusion_min_visible_points surviving points. Its label is suffixed "-r" to mark
 # it as a geometric guess rather than an actual detection this frame.
-save_fused_masks: !!bool True
 
 # Whole-scene object graph (all persistent objects/edges in the final map,
 # not per-frame): saved as <exp_out_path>/scenegraph_full.png once mapping
-# finishes. Requires save_json (reads back the just-saved obj_json/edge_json).
-save_scenegraph_full: !!bool True
+# finishes (reads back the just-saved obj_json/edge_json).
