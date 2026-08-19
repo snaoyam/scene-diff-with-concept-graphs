@@ -24,6 +24,7 @@ import supervision as sv
 from collections import Counter
 
 # Local application/library specific imports
+from conceptgraph.utils.combine_frame_viz import combine_frame_viz
 from conceptgraph.utils.optional_wandb_wrapper import OptionalWandB
 from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker
 from conceptgraph.utils.vlm import consolidate_captions, get_openai_client
@@ -936,6 +937,8 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         title=f"{cfg.scene_id} / {EXP_SUFFIX}",
     )
     print(f"Saved full scene graph to {full_scenegraph_path} version: {VERSION_TEXT}")
+
+    combine_frame_viz(exp_out_path)
 
     # Save metadata if all frames are saved
     if cfg.save_objects_all_frames:
