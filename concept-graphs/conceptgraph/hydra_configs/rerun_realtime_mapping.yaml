@@ -60,6 +60,21 @@ contain_mismatch_penalty: 0.5
 mask_area_threshold: 25 # mask with pixel area less than this will be skipped
 mask_conf_threshold: 0.10 # mask with lower confidence score will be skipped
 max_bbox_area_ratio: null # boxes with larger areas than this will be skipped
+max_mask_area_ratio: 0.60 # masks covering more than this fraction of the frame are skipped.
+                          # Measured on bathroom_1_bathroom_2 (which has the frame-filling
+                          # host masks this targets): obj/im AP 0.1445 -> 0.1517, obj/sc AP
+                          # 0.3333 -> 0.3750, px/im IoU 0.3141 -> 0.3136, FP 5 -> 7. It is
+                          # also what stops those masks bridging separate things into one
+                          # node, which is why the object count rises (60 -> 89) -- the
+                          # graph gets more fragmented and more correct at once.
+                          # Sibling of max_bbox_area_ratio, but on the MASK rather than its
+                          # box: a wall/floor/countertop mask is faithfully huge while its
+                          # box is huge for any diagonally-oriented thin object too. Drops
+                          # one frame's detection, never the object -- the object survives
+                          # through its other frames -- so it can sit well above what a
+                          # legitimate close-up ever reaches (measured on the SceneDiff GT:
+                          # fewer than 0.5% of annotated objects ever exceed 0.5 in any
+                          # single frame). null disables.
 
 # SAM sprinkles speckle across a mask wherever it is unsure of a boundary -- e.g. a
 # blanket draped over a sofa, where one sofa mask came out as 69-83 connected components.
@@ -252,6 +267,102 @@ compute_recognition_confidence: !!bool True
 recognition_min_recognized_frames: 1    # must be recognized in at least this many frames
 recognition_min_confidence: 0.40        # recognition_confidence must be at least this
 
+# ---- Large-object exclusion (annotate_large_objects, slam/geometric_fusion.py) ----
+#
+# Furniture, walls, bathtubs and the like are not what this benchmark is about: across
+# all 355 SceneDiff scene pairs, not one of the 1017 annotated changed objects is a
+# wall, floor, ceiling, window or staircase -- they are all small things a person
+# picked up and put down. Large nodes are pure liability here in two ways. They are
+# reconstructed too unstably to compare across two scans, so noise in them surfaces as
+# a spurious change; and while a scan is running their screen footprint swallows the
+# small objects resting on them (see fusion_containment_weak_min below).
+#
+# Like recognition_trusted, is_large REMOVES NOTHING -- the object stays in the graph
+# and stays available as a match target for the other scan. It only loses the right to
+# assert added/removed/moved, and (during the scan) the right to absorb new detections.
+#
+# Primary criterion is 2D: the per-frame share of the image each of the object's own
+# detection masks covered, taken at large_object_coverage_percentile. Calibrated
+# against the same statistic computed over every GT object in the benchmark -- a
+# threshold of 0.20 would exclude 2.9% of GT objects, 0.25 excludes 1.5%, 0.30 excludes
+# 1.1%. A high percentile rather than the max so one runaway SAM mask cannot condemn an
+# object, and rather than the mean so a big object filmed mostly from across the room
+# still registers.
+large_object_coverage_percentile: 90
+large_object_coverage_thresh: 0.25      # null disables the 2D criterion
+large_object_min_detections: 3          # too few masks for a percentile to mean anything
+#
+# Secondary criterion, OR-ed with the first: 3D size relative to the scene. The
+# reconstruction's coordinates are an arbitrary (Pi3-estimated) scale -- scenes here
+# span roughly 1 unit -- so this is a ratio against the scene's own diagonal, never an
+# absolute length.
+#
+# It is doing the heavier lifting of the two, because it separates cases 2D cannot. On
+# bathroom_1_bathroom_2 the single largest false positive was a clothes basket, whose
+# 2D coverage (0.18) sits squarely inside the range legitimate GT objects reach but
+# whose 3D ratio is 0.30; the bathtub is 0.36 on 0.20 coverage. Measured effect of
+# turning this on at 0.30, with the 2D criterion unchanged at 0.25:
+#   bathroom_1_bathroom_2   px/im IoU 0.1639 -> 0.3141   (FP 1,184,691 -> 361,549 px)
+#                           obj/im AP 0.1416 -> 0.1445, obj/sc AP 0.3214 -> 0.3333
+#                           TP 2 -> 2, FP 6 -> 5   (no true positive lost)
+#   living_room_17_18       unchanged -- the 2D criterion already covered its one large
+#                           node, and no other object came near either threshold
+# For reference the SceneDiff baseline scores 0.3097 px/im IoU on that bathroom pair.
+large_object_extent_ratio_thresh: 0.30
+
+# While a scan runs, an object already marked is_large stops being offered as a fusion
+# candidate for new detections, so it cannot keep swallowing what sits on it. It is NOT
+# excluded from the post-scan object-object sweep (global_geometry_consolidation), so
+# the fragments this splits a large surface into are collected back into one node at
+# the end -- absorption is blocked, node identity is not.
+#
+# On the two pilot scenes this measured as an exact no-op: identical scores and identical
+# object counts with it on and off. That is not evidence it does nothing in general, only
+# that on these scenes max_mask_area_ratio had already removed the frame-filling masks
+# through which a large node would have done its swallowing. Left on because it is the
+# direct guard for the failure it names, and it costs nothing when nothing is large.
+fusion_exclude_large_from_fusion: !!bool True
+
+# Guard on the "strong" association direction, applied per DETECTION (in
+# fuse_detections_geometry_only) rather than per candidate pair. The gate takes the
+# better of
+#   strong = |intersection| / |detection mask|    "how much of D does O explain?"
+#   weak   = |intersection| / |object footprint|  "how much of O does D cover?"
+# and a small mask lying entirely inside a big object's footprint scores strong ~= 1.0
+# for that candidate even though it is nowhere near the whole of it -- e.g. a remote's
+# mask sitting inside a coffee table's footprint. Left unguarded, that strong match
+# fuses the remote's own (correctly-sized, separately tracked) object straight into the
+# coffee table, discarding the remote's identity and geometry -- observed directly on
+# living_room_17_living_room_18/before, mask_idx 0 ("remote"): at frame 1 it strong-
+# matches curr_obj_num 2 ("coffee table", weak_overlap 0.09) while also weak-matching
+# its own object (weak_overlap 1.0); at frame 2 its own object's weak_overlap comes
+# back None (footprint didn't project that frame) so BOTH candidates read as strong
+# with no weak match at all that frame.
+#
+# Because of that second case, this can't be gated on "a weak match exists this frame"
+# -- it has to work from the STRONG candidates alone. A strong candidate is flagged as
+# containment when its own weak_overlap is defined and below this value (None, i.e.
+# "couldn't be measured", is never flagged -- that is not evidence of containment).
+# Flagged candidates are only actually dropped from the merge when something else
+# survives for the detection to attach to instead -- an unflagged strong candidate, or
+# a weak match -- so a detection is never left with nowhere to merge. If every strong
+# candidate is flagged and there is no weak match either, this can't tell identity from
+# containment and declines to guess, leaving the original merge-them-all behaviour.
+#
+# An earlier, narrower version of this (gated strictly on "a weak match exists") missed
+# the frame-2 case above -- the remote still ended up folded into the coffee table a
+# frame later, taking on its class via the post-scan class-name majority vote, because
+# the guard never got a chance to run once weak_ids was empty. An even earlier version
+# used a CLIP+DINO appearance check as the backstop instead of this geometric one; that
+# version fired even with no fallback present, and appearance at the 0.62 threshold
+# tuned for whole-scan semantic matching was too strict for a single frame's crop -- on
+# bathroom_1_bathroom_2 it wrongly rejected enough of those fallback-less cases to
+# fragment the graph (89 -> 91 objects "before"), costing more (obj/sc AP 0.3750 ->
+# 0.1111, FP 7 -> 9) than it gained (px/im IoU 0.3136 -> 0.3323). This version only
+# ever acts when there is somewhere safe for the detection to go, so it does not carry
+# that risk. null disables.
+fusion_containment_weak_min: 0.15
+
 # ---- before/after comparison (convert_concept_graphs_to_scene_diff_benchmark_data.py,
 #      which reads this same yaml via hydra.compose; CLI flags there override these) ----
 #
@@ -283,6 +394,9 @@ scenediff_dino_weight: 0.5
 #
 scenediff_max_match_distance: 1.5   # beyond this centroid distance a pair is never a match
 scenediff_moved_threshold: 0.3      # a matched pair further apart than this counts as moved
+scenediff_exclude_large_objects: !!bool True   # is_large objects may be matched against but
+                                                # never asserted as added/removed/moved, exactly
+                                                # as recognition_trusted=False objects are
 
 # SceneDiff (github.com/yuqunw/scene_diff) video pairs, preprocessed into
 # ScanNet-style RGB-D sequences by conceptgraph/dataset/scenediff_to_conceptgraph.py.

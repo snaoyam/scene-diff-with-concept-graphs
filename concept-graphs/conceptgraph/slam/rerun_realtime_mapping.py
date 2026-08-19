@@ -77,6 +77,7 @@ from conceptgraph.slam.utils import (
     resize_gobs
 )
 from conceptgraph.slam.geometric_fusion import (
+    annotate_large_objects,
     FrameView,
     FusionDebugWriter,
     compute_recognition_confidence,
@@ -449,6 +450,11 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         # debug view is visible without occluding the ground-truth left panel.
         frame_objects = []
         for obj in objects:
+            # "-L" marks an object the size rule has excluded (annotate_large_objects):
+            # it no longer absorbs detections, and won't be allowed to assert a change.
+            # Applied BEFORE the "-r" suffix below, because the real/reprojected split
+            # further down keys off the label's ending.
+            label = obj['class_name'] + ("-L" if obj.get('is_large') else "")
             local_indices = [i for i, idx in enumerate(obj['image_idx']) if idx == frame_idx]
             if local_indices:
                 # A merge can fold more than one raw detection from this frame into
@@ -457,7 +463,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 combined_mask = np.logical_or.reduce([obj['mask'][i] for i in local_indices])
                 frame_objects.append({
                     'obj_num': obj['curr_obj_num'],
-                    'class_name': obj['class_name'],
+                    'class_name': label,
                     'mask': combined_mask,
                 })
                 continue
@@ -468,7 +474,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
                 continue  # out of frustum, occluded, or too few surviving points to mean anything
             frame_objects.append({
                 'obj_num': obj['curr_obj_num'],
-                'class_name': obj['class_name'] + "-r",
+                'class_name': label + "-r",
                 'mask': footprint,
             })
 
@@ -697,6 +703,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             BG_CLASSES=obj_classes.get_bg_classes_arr(),
             mask_area_threshold=cfg.mask_area_threshold,
             max_bbox_area_ratio=cfg.max_bbox_area_ratio,
+            max_mask_area_ratio=cfg.max_mask_area_ratio,
             mask_conf_threshold=cfg.mask_conf_threshold,
         )
 
@@ -891,6 +898,15 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         # obj_json, and the scene-graph render. The flag is consumed later, by the
         # before/after benchmark comparison.
         annotate_recognition_trust(objects, geo_fusion_params, debug=fusion_debug)
+
+    # Same treatment for size: flag, remove nothing. The flag has already been in use
+    # during the scan (fuse_detections_geometry_only recomputes it after every merge, to
+    # stop a large object absorbing what rests on it), but only on the 2D criterion --
+    # the scene's own extent isn't known while the scan is still running. This final
+    # pass is where the 3D criterion gets its chance, and where the verdict is settled
+    # against each object's finished geometry so the saved graph carries a flag that
+    # matches what it actually contains.
+    annotate_large_objects(objects, geo_fusion_params, debug=fusion_debug)
     fusion_debug.close()
 
     # Build the whole scene's object graph once, from the final (fully
@@ -935,7 +951,9 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             combined_xyxy = np.concatenate([xyxy_stack[:, :2].min(axis=0), xyxy_stack[:, 2:].max(axis=0)])
             frame_objects.append({
                 'obj_num': obj['curr_obj_num'],
-                'class_name': obj['class_name'],
+                # "-L" as in fused_masks/ above: excluded by the size rule, so it will
+                # never be asserted as a change even though it is drawn here.
+                'class_name': obj['class_name'] + ("-L" if obj.get('is_large') else ""),
                 'caption': obj['captions'][local_indices[0]].get('caption', '') if obj['captions'] else '',
                 'mask': combined_mask,
                 'xyxy': combined_xyxy,

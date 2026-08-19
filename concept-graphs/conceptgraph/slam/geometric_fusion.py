@@ -109,7 +109,12 @@ from scipy.spatial import cKDTree
 from tqdm import trange
 
 from conceptgraph.slam.slam_classes import DetectionList, MapObjectList
-from conceptgraph.slam.utils import from_intrinsics_matrix, get_bounding_box, merge_obj2_into_obj1
+from conceptgraph.slam.utils import (
+    compute_robust_bbox,
+    from_intrinsics_matrix,
+    get_bounding_box,
+    merge_obj2_into_obj1,
+)
 
 # How BOTH association directions are measured (see the module docstring).
 ASSOCIATION_MODE_PROJECTION = "projection"  # 2D: one screen-space intersection, two denominators (default)
@@ -132,6 +137,10 @@ REASON_DEFERRED = "deferred_to_next_sweep"
 # Passed both gates on the weak (containment) direction, but another weak candidate
 # matched this detection better and only the closest one is allowed to merge.
 REASON_WEAK_NOT_CLOSEST = "weak_not_closest"
+# Passed the strong (this-detection-is-that-object) direction, but covered so little of
+# the object that the only honest reading is containment -- a mug's mask sitting inside
+# a table's footprint -- and the appearance check that then arbitrates said no.
+REASON_CONTAINMENT_REJECT = "containment_appearance_reject"
 
 
 @dataclass
@@ -164,6 +173,17 @@ class GeometryFusionParams:
     # minimums an object must MEET to be trusted -- nothing is removed either way.
     recognition_min_recognized_frames: int
     recognition_min_confidence: float
+    # Large-object exclusion, applied by annotate_large_objects(). Both criteria are
+    # OR-ed and either can be disabled by setting its threshold to None. See the yaml
+    # for the calibration behind the defaults.
+    large_object_coverage_percentile: float
+    large_object_coverage_thresh: float | None
+    large_object_min_detections: int
+    large_object_extent_ratio_thresh: float | None
+    exclude_large_from_fusion: bool
+    # Floor on the weak ratio before a strong-direction pass is taken at face value;
+    # None disables the guard. See evaluate_detection_gates.
+    containment_weak_min: float | None
     # merge_obj2_into_obj1 passthrough
     downsample_voxel_size: float
     dbscan_remove_noise: bool
@@ -171,6 +191,29 @@ class GeometryFusionParams:
     dbscan_min_points: int
     spatial_sim_type: str
     device: str
+
+
+def _cfg_get(cfg, key, default):
+    """
+    cfg is an OmegaConf DictConfig here, whose .get() exists but whose plain [] raises
+    on a missing key. The large-object keys postdate some saved configs (the comparison
+    stage re-composes this same yaml, but a pcd written by an older run carries its own
+    cfg snapshot), so read them tolerantly rather than making an old artifact unloadable.
+    """
+    try:
+        value = cfg.get(key, default)
+    except AttributeError:
+        value = cfg[key] if key in cfg else default
+    return default if value is None else value
+
+
+def _cfg_get_optional_float(cfg, key):
+    """Same, for keys whose `null` is meaningful (it disables the criterion)."""
+    try:
+        value = cfg.get(key, None)
+    except AttributeError:
+        value = cfg[key] if key in cfg else None
+    return None if value is None else float(value)
 
 
 def geometry_fusion_params_from_cfg(cfg) -> GeometryFusionParams:
@@ -193,6 +236,12 @@ def geometry_fusion_params_from_cfg(cfg) -> GeometryFusionParams:
         max_sweeps=int(cfg['fusion_global_consolidation_max_sweeps']),
         recognition_min_recognized_frames=int(cfg['recognition_min_recognized_frames']),
         recognition_min_confidence=float(cfg['recognition_min_confidence']),
+        large_object_coverage_percentile=float(_cfg_get(cfg, 'large_object_coverage_percentile', 90.0)),
+        large_object_coverage_thresh=_cfg_get_optional_float(cfg, 'large_object_coverage_thresh'),
+        large_object_min_detections=int(_cfg_get(cfg, 'large_object_min_detections', 3)),
+        large_object_extent_ratio_thresh=_cfg_get_optional_float(cfg, 'large_object_extent_ratio_thresh'),
+        exclude_large_from_fusion=bool(_cfg_get(cfg, 'fusion_exclude_large_from_fusion', True)),
+        containment_weak_min=_cfg_get_optional_float(cfg, 'fusion_containment_weak_min'),
         downsample_voxel_size=voxel,
         dbscan_remove_noise=bool(cfg['dbscan_remove_noise']),
         dbscan_eps=float(cfg['dbscan_eps']),
@@ -849,11 +898,12 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
                 return record
 
     record["reason"] = REASON_MERGE
+    strong_pass = strong_overlap >= params.point_overlap_thresh
     # A strong claim stands on its own -- the detection is substantially this object, so
     # several of them at once means the node was split and should be rejoined. A weak
     # claim only says the detection encloses the node, which a host mask does for every
     # object lying on it, so the caller keeps just the closest one.
-    record["gate_class"] = "strong" if strong_overlap >= params.point_overlap_thresh else "weak"
+    record["gate_class"] = "strong" if strong_pass else "weak"
     return record
 
 
@@ -978,7 +1028,18 @@ def fuse_detections_geometry_only(
 
         records = []
         strong_ids, weak_ids = [], []
+        n_large_skipped = 0
         for obj_idx in np.nonzero(bbox_pass)[0]:
+            # An object already grown past the size limit stops being offered as a
+            # candidate, so it cannot keep swallowing what sits on it. This does split a
+            # large surface into several nodes over the scan -- every later detection of
+            # it starts a fresh one -- which is why global_geometry_consolidation, the
+            # post-scan object-object sweep, deliberately does NOT apply this rule: the
+            # fragments are collected back into one node there. Absorption is what gets
+            # blocked; node identity survives.
+            if params.exclude_large_from_fusion and obj_list[obj_idx].get('is_large'):
+                n_large_skipped += 1
+                continue
             record = evaluate_detection_gates(
                 det, obj_list[obj_idx], params, view, visibility, det_eroded_idx=det_eroded_idx)
             # obj_idx is this object's position in the live list, which merges and
@@ -1005,6 +1066,49 @@ def fuse_detections_geometry_only(
         # everything on it into one node.
         by_overlap = {i: r["primary_overlap"] for i, r in records}
         weak_keep = max(weak_ids, key=lambda i: by_overlap[i]) if weak_ids else None
+
+        # A strong match is only "substantially that object" when the object's own
+        # footprint isn't much bigger than the detection -- record["weak_overlap"] IS
+        # that ratio (intersection / candidate's footprint), computed regardless of
+        # which direction ended up primary. A strong pass paired with a near-zero
+        # weak_overlap is the containment signature instead: the detection's mask sits
+        # wholly inside a much bigger candidate's footprint (a remote on a coffee
+        # table, a mug on a sofa), and merging would fold a small object's identity and
+        # geometry into an unrelated large one.
+        #
+        # A strong match is only ever second-guessed here when the SAME detection has
+        # somewhere else to go instead -- a weak match, or another strong match that
+        # doesn't show the containment signature -- so this never orphans a detection.
+        # weak_overlap can also be None (the candidate's footprint didn't project this
+        # frame -- occlusion, or too few points in view); that candidate is left alone
+        # rather than flagged, since "couldn't be measured" is not evidence of
+        # containment. This is why the check can't simply be "only when weak_ids is
+        # non-empty": weak_overlap failing to compute for an object's OWN correct match
+        # makes evaluate_detection_gates call it strong too (no weak reading to prefer),
+        # so on frame 2 of this same scan the remote's own object showed up as a
+        # strong-only match right alongside the coffee table's containment match, with
+        # no weak_ids at all -- and that pairing needs exactly the same exclusion frame
+        # 1's weak_ids-gated version would have missed.
+        record_by_idx = dict(records)
+        host_excluded = set()
+        if params.containment_weak_min is not None and strong_ids:
+            def shows_containment(i):
+                w = record_by_idx[i].get("weak_overlap")
+                return w is not None and w < params.containment_weak_min
+
+            flagged = [i for i in strong_ids if shows_containment(i)]
+            survivors = [i for i in strong_ids if i not in flagged]
+            # Only drop what's flagged when something remains to merge into instead --
+            # a clean strong survivor among strong_ids, or a weak match. If EVERY
+            # candidate looks like containment and there's no weak match either, this
+            # can't tell identity from containment, so it declines to guess and leaves
+            # the original merge-them-all behaviour in place.
+            if flagged and (survivors or weak_keep is not None):
+                strong_ids = survivors
+                host_excluded = set(flagged)
+                for i in flagged:
+                    record_by_idx[i]["reason"] = REASON_CONTAINMENT_REJECT
+
         merging = strong_ids + ([weak_keep] if weak_keep is not None else [])
         weak_dropped = set(weak_ids) - {weak_keep}
 
@@ -1013,6 +1117,16 @@ def fuse_detections_geometry_only(
             obj_list[anchor] = _merge_into(obj_list[anchor], det, params, run_dbscan=False)
             for other in merging[1:]:
                 obj_list[anchor] = _merge_into(obj_list[anchor], obj_list[other], params, run_dbscan=False)
+            # Re-decided here rather than only at the end of the scan, because the point
+            # of the flag during a scan is to stop this object absorbing the NEXT
+            # detection -- a verdict computed after the last frame would come too late
+            # to prevent anything. Cheap: a percentile over a list of floats.
+            # Size-relative-to-scene is left to the end-of-scan pass, since the scene's
+            # own extent isn't known yet while the scan is still running.
+            #
+            # Before the deletions below, not after: `anchor` indexes obj_list, and
+            # removing the folded-in entries shifts every index past the first of them.
+            obj_list[anchor]['is_large'] = is_large_object(obj_list[anchor], params, scene_diag=None)
             for other in sorted(merging[1:], reverse=True):
                 del obj_list[other]
             action = "fused"
@@ -1055,6 +1169,8 @@ def fuse_detections_geometry_only(
                 "n_strong": len(strong_ids),
                 "n_weak": len(weak_ids),
                 "n_weak_dropped": len(weak_dropped),
+                "n_host_excluded": len(host_excluded),
+                "n_large_skipped": n_large_skipped,
                 "n_bbox_reject": int(len(bbox_pass) - bbox_pass.sum()),
                 "action": action,
                 "reason": summary_reason,
@@ -1288,3 +1404,156 @@ def annotate_recognition_trust(objects, params: GeometryFusionParams,
     print(f"Recognition trust: {n_trusted}/{len(objects)} objects trusted "
           f"(min_recognized_frames={params.recognition_min_recognized_frames}, "
           f"min_confidence={params.recognition_min_confidence}); none removed")
+
+
+# ---------------------------------------------------------------------------
+# Large-object exclusion
+#
+# What counts as "large" has to be decided in exactly one place, because three very
+# different call sites ask the question: the per-frame fusion loop (may this object
+# still absorb detections?), the end-of-scan annotation that writes the flag into the
+# saved graph, and the before/after comparison (may this object assert a change?). The
+# comparison can also be handed a graph built before the flag existed, so it recomputes
+# the same predicate from the stored masks -- which only works if there is one
+# predicate to recompute.
+# ---------------------------------------------------------------------------
+
+def object_coverage_stat(obj, percentile: float):
+    '''
+    The `percentile`-th percentile of how much of the frame each of this object's own
+    detection masks covered.
+
+    Reads obj['mask_coverage'], the running per-detection list maintained alongside
+    obj['mask'] (see make_detection_list_from_pcd_and_gobs and merge_obj2_into_obj1's
+    extend_attributes). Kept as its own list of floats rather than recomputed from
+    obj['mask'] on demand because this is asked once per merge per frame, and a
+    well-observed object accumulates hundreds of full-frame boolean masks.
+
+    Returns None when the object has no detections of its own -- an unconfirmed seed,
+    which has geometry but has never been seen this scan.
+    '''
+    coverage = obj.get('mask_coverage')
+    if not coverage:
+        return None
+    return float(np.percentile(np.asarray(coverage, dtype=float), percentile))
+
+
+def scene_scale_diagonal(objects, trim_percentile: float = 1.0):
+    '''
+    A length to measure object sizes against, since the reconstruction's coordinates
+    are an arbitrary (Pi3-estimated) scale rather than metres -- the pilot scenes span
+    roughly 1 unit end to end, so no absolute threshold in this space means anything.
+
+    Taken as the diagonal of the trimmed AABB over every object's points. Trimmed
+    because a single stray backprojected point far behind a wall would otherwise
+    inflate the reference and quietly stop anything from ever being called large.
+
+    Returns None when there is nothing to measure.
+    '''
+    clouds = [np.asarray(pts) for pts in (_object_points(obj) for obj in objects) if pts is not None]
+    clouds = [c for c in clouds if len(c) > 0]
+    if not clouds:
+        return None
+    all_points = np.concatenate(clouds, axis=0)
+    lo = np.percentile(all_points, trim_percentile, axis=0)
+    hi = np.percentile(all_points, 100 - trim_percentile, axis=0)
+    return float(np.linalg.norm(hi - lo))
+
+
+def _object_points(obj):
+    '''
+    An object's points, from whichever of the two representations it carries: 'pcd'
+    (an open3d cloud, during a scan) or 'pcd_np' (a plain array, after
+    MapObjectList.to_serializable has been through it). Returns None if neither.
+    '''
+    pcd = obj.get('pcd')
+    if pcd is not None:
+        return _points(pcd)
+    pcd_np = obj.get('pcd_np')
+    if pcd_np is not None:
+        return np.asarray(pcd_np)
+    return None
+
+
+def object_extent_ratio(obj, scene_diag):
+    '''
+    Longest axis of the object's outlier-trimmed bounding box, as a fraction of the
+    scene diagonal. None when it can't be computed (no points, or no scene reference).
+    '''
+    if not scene_diag:
+        return None
+    points = _object_points(obj)
+    if points is None or len(points) == 0:
+        return None
+    lo, hi = compute_robust_bbox(points)
+    return float(np.max(hi - lo)) / scene_diag
+
+
+def is_large_object(obj, params: GeometryFusionParams, scene_diag=None) -> bool:
+    '''
+    The predicate itself: large by 2D screen footprint OR by 3D size relative to the
+    scene. Either criterion can be switched off by nulling its threshold; with both off
+    nothing is ever large and every call site degrades to its previous behaviour.
+
+    The 2D criterion additionally needs large_object_min_detections masks before it will
+    fire, since a percentile over one or two samples is just that sample. This is what
+    keeps a single unlucky close-up from condemning an object, and it is also why the
+    3D criterion is a useful complement: it needs no repeated observation at all.
+    '''
+    cov_thresh = params.large_object_coverage_thresh
+    if cov_thresh is not None and int(obj.get('num_detections', 0)) >= params.large_object_min_detections:
+        coverage = object_coverage_stat(obj, params.large_object_coverage_percentile)
+        if coverage is not None and coverage > cov_thresh:
+            return True
+
+    ratio_thresh = params.large_object_extent_ratio_thresh
+    if ratio_thresh is not None:
+        ratio = object_extent_ratio(obj, scene_diag)
+        if ratio is not None and ratio > ratio_thresh:
+            return True
+
+    return False
+
+
+def annotate_large_objects(objects, params: GeometryFusionParams,
+                           scene_diag=None, debug: FusionDebugWriter = None) -> None:
+    '''
+    Writes `is_large` (plus the two measurements behind it, for inspection) onto every
+    object, and prints a summary.
+
+    Nothing is removed, deliberately and for the same reason annotate_recognition_trust
+    removes nothing: a large object is still the correct thing for the other scan's
+    objects to match against, and dropping it here would turn its counterpart into an
+    unmatched object that the comparison would then wrongly assert as added/removed.
+    What the flag takes away is only the right to assert a change.
+
+    `scene_diag` is computed from `objects` when not supplied. Pass it explicitly if
+    it's already been computed, or to hold the reference length fixed across a
+    before/after pair.
+    '''
+    if scene_diag is None and params.large_object_extent_ratio_thresh is not None:
+        scene_diag = scene_scale_diagonal(objects)
+
+    n_large = 0
+    for obj in objects:
+        coverage = object_coverage_stat(obj, params.large_object_coverage_percentile)
+        ratio = object_extent_ratio(obj, scene_diag) if params.large_object_extent_ratio_thresh is not None else None
+        obj['mask_coverage_stat'] = coverage
+        obj['extent_ratio'] = ratio
+        large = is_large_object(obj, params, scene_diag)
+        obj['is_large'] = large
+        n_large += int(large)
+        if large and debug is not None and debug.enabled:
+            debug.log("large_objects", {
+                "obj_num": obj.get('curr_obj_num'),
+                "class_name": obj.get('class_name'),
+                "num_detections": obj.get('num_detections'),
+                "coverage_stat": coverage,
+                "extent_ratio": ratio,
+                "scene_diag": scene_diag,
+            })
+
+    print(f"Large-object exclusion: {n_large}/{len(objects)} objects marked is_large "
+          f"(coverage p{params.large_object_coverage_percentile:g} > "
+          f"{params.large_object_coverage_thresh}, extent ratio > "
+          f"{params.large_object_extent_ratio_thresh}); none removed")

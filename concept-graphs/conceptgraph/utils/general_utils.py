@@ -712,6 +712,16 @@ def save_obj_json(exp_suffix, exp_out_path, objects):
             # are still written out in full -- only the before/after comparison treats
             # them differently (see annotate_recognition_trust).
             "recognition_trusted": curr_obj.get('recognition_trusted', True),
+            # Size, and whether it disqualifies this object from asserting a change --
+            # see annotate_large_objects() in slam/geometric_fusion.py. Same contract as
+            # recognition_trusted above: large objects are written out in full and stay
+            # available for the other scan to match against; only the change verdict
+            # treats them differently. Both measurements are recorded even when the
+            # criterion behind one of them is disabled, so a threshold can be re-picked
+            # from a finished run without rebuilding the graph.
+            "mask_coverage_stat": curr_obj.get('mask_coverage_stat'),
+            "extent_ratio": curr_obj.get('extent_ratio'),
+            "is_large": curr_obj.get('is_large', False),
         }
         json_obj_list[obj_key] = obj_dict
         

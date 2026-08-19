@@ -202,7 +202,8 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     tracker.track_merge(obj1, obj2)
     
     # Attributes to be explicitly handled
-    extend_attributes = ['image_idx', 'mask_idx', 'color_path', 'class_id', 'mask', 'xyxy', 'conf', 'contain_number', 'captions']
+    extend_attributes = ['image_idx', 'mask_idx', 'color_path', 'class_id', 'mask', 'xyxy', 'conf', 'contain_number', 'captions',
+                          'mask_coverage']
     add_attributes = ['num_detections', 'num_obj_in_class']
     # 'is_seeded_prior'/'seed_source_before_id' (load_prior_scene_objects_as_seeds):
     # obj2 can itself be a seed here, not just obj1 -- fuse_detections_geometry_only
@@ -210,8 +211,14 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     # OTHER candidates being folded in, not only the anchor. Skipping them means obj1
     # keeps its own seed status (or lack of it) regardless of obj2's; the fields exist
     # only for post-hoc traceability and are never read to make a fusion decision.
+    # 'is_large'/'mask_coverage_stat'/'extent_ratio' are derived, not carried: the merged
+    # object's size is not obj1's or obj2's but the union's, so keeping obj1's value here
+    # would be wrong in exactly the case that matters. fuse_detections_geometry_only
+    # recomputes them on the anchor right after each merge; listing them here only stops
+    # the unhandled-key check below from rejecting an object that already has them.
     skip_attributes = ['id', 'class_name', 'is_background', 'new_counter', 'curr_obj_num', 'inst_color',
-                        'is_seeded_prior', 'seed_source_before_id']  # 'inst_color' just keeps obj1's
+                        'is_seeded_prior', 'seed_source_before_id',
+                        'is_large', 'mask_coverage_stat', 'extent_ratio']  # 'inst_color' just keeps obj1's
     custom_handled = ['pcd', 'bbox', 'clip_ft', 'dino_ft', 'clip_ft_mean', 'dino_ft_mean', 'text_ft', 'n_points',
                        'confirmed_pcd']
 
@@ -644,6 +651,7 @@ def filter_gobs(
     BG_CLASSES: list = None,  # Explicitly passing BG_CLASSES
     mask_area_threshold: float = 10,  # Default value as fallback
     max_bbox_area_ratio: float = None,  # Explicitly passing max_bbox_area_ratio
+    max_mask_area_ratio: float = None,  # Explicitly passing max_mask_area_ratio
     mask_conf_threshold: float = None,  # Explicitly passing mask_conf_threshold
 ):
     # If no detection at all
@@ -668,13 +676,24 @@ def filter_gobs(
             continue
 
         # Skip the non-background boxes that are too large
+        image_area = image.shape[0] * image.shape[1]
         if class_name not in BG_CLASSES:
             x1, y1, x2, y2 = gobs['xyxy'][mask_idx]
             bbox_area = (x2 - x1) * (y2 - y1)
-            image_area = image.shape[0] * image.shape[1]
             if max_bbox_area_ratio is not None and bbox_area > max_bbox_area_ratio * image_area:
                 logging.debug(f"Skipped due to large bounding box area ratio - Class: {class_name}, Area Ratio: {bbox_area/image_area:.4f}")
                 continue
+
+        # Skip masks that cover too much of the frame. Sibling of the box test above,
+        # but on the mask itself, and applied to background classes too: a wall or floor
+        # mask is faithfully enormous, whereas its box is enormous for any diagonally
+        # oriented thin object as well, so the box test can't be tightened far enough to
+        # catch the former without also catching the latter. This drops one frame's
+        # detection, never the object -- it survives through the frames where it doesn't
+        # fill the view -- which is what lets the threshold sit as high as it does.
+        if max_mask_area_ratio is not None and mask_area > max_mask_area_ratio * image_area:
+            logging.debug(f"Skipped due to large mask area ratio - Class: {class_name}, Area Ratio: {mask_area/image_area:.4f}")
+            continue
 
         # Skip masks with low confidence
         if mask_conf_threshold is not None and gobs['confidence'] is not None:
@@ -831,6 +850,11 @@ def make_detection_list_from_pcd_and_gobs(
             'captions' : [gobs['captions'][mask_idx]],           # captions for this detection
             'num_detections' : 1,                            # number of detections in this object
             'mask': [gobs['mask'][mask_idx]],
+            # Fraction of the frame this one mask covered. Accumulated per detection
+            # (rather than derived from 'mask' later) because annotate_large_objects and
+            # the per-frame fusion loop both ask for a percentile over it repeatedly, and
+            # a well-observed object ends up holding hundreds of full-frame bool arrays.
+            'mask_coverage': [float(np.asarray(gobs['mask'][mask_idx]).mean())],
             'xyxy': [gobs['xyxy'][mask_idx]],
             'conf': [gobs['confidence'][mask_idx]],
             'n_points': len(obj_pcds_and_bboxes[mask_idx]['pcd'].points),
@@ -919,6 +943,13 @@ def load_prior_scene_objects_as_seeds(
         # trusted by default rather than being silently excluded from seeding.
         if not obj.get("recognition_trusted", True):
             continue
+        # Same reasoning one step further: a large object is barred from asserting a
+        # change anyway, so seeding one buys nothing, while a seed the size of a sofa
+        # sitting in the candidate list from frame 0 is the single best-placed thing in
+        # the scan to absorb everything resting on it. Absent on graphs built before the
+        # flag existed, which then seed exactly as they used to.
+        if obj.get("is_large", False):
+            continue
 
         class_name = obj["class_name"]
         try:
@@ -950,6 +981,7 @@ def load_prior_scene_objects_as_seeds(
             'captions': [],
             'num_detections': 0,
             'mask': [],
+            'mask_coverage': [],
             'xyxy': [],
             'conf': [],
             'n_points': len(pcd.points),

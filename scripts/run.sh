@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-CUDA_VISIBLE_DEVICES=6 #always use only GPU=6 and do not use any other GPU nodes
+CUDA_VISIBLE_DEVICES=6 #always only use GPU=6 and do not use any other GPU nodes
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 timestamp="$(date '+%Y-%m-%d_%H-%M-%S')"
 

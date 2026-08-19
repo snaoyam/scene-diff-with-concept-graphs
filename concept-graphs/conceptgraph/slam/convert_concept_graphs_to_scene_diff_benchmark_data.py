@@ -66,6 +66,10 @@ from pathlib import Path
 import hydra
 from conceptgraph.utils.general_utils import EXP_SUFFIX
 from conceptgraph.slam.geometric_fusion import (
+    is_large_object,
+    object_coverage_stat,
+    object_extent_ratio,
+    scene_scale_diagonal,
     _bbox_gate_vector,
     aabb_from_points,
     count_visible_frames,
@@ -153,16 +157,51 @@ def load_scene_hw(pair_name: str):
     return None
 
 
-def load_objects(concept_graphs_dir: Path, variant: str, exp_suffix: str):
+def load_objects(concept_graphs_dir: Path, variant: str, exp_suffix: str, params=None):
+    """
+    The non-background objects of one scan.
+
+    `params`, when given, backfills `is_large` on any object that doesn't already carry
+    it -- a graph built before the flag existed. The predicate is the same
+    is_large_object() the mapping stage applies (annotate_large_objects), recomputed
+    here from the fields the pcd does store: 'mask_coverage' when present, and
+    otherwise straight from the saved per-detection masks. That backfill is what lets a
+    threshold be re-picked, or the whole rule be tried for the first time, by re-running
+    only this stage over existing outputs.
+    """
     pcd_path = concept_graphs_dir / variant / "exps" / exp_suffix / f"pcd_{exp_suffix}.pkl.gz"
     with gzip.open(pcd_path, "rb") as f:
         data = pickle.load(f)
     objects = [obj for obj in data["objects"] if not obj.get("is_background", False)]
+    if params is not None:
+        _backfill_is_large(objects, params)
     # up_axis/up_direction are the main pipeline's camera-grounded detect_up_vector()
     # result (slam/utils.py), persisted by save_pointcloud() -- .get() so pcd files
     # saved before this was added still load fine (up_axis=None triggers a fallback
     # in save_change_pointcloud_debug_image()).
     return objects, data.get("up_axis"), data.get("up_direction")
+
+
+def _backfill_is_large(objects, params) -> None:
+    """
+    Recomputes `is_large` for `objects` in place, always -- not only when the key is
+    missing. The thresholds live in the yaml this stage re-composes, so re-deciding here
+    is what makes them tunable without rebuilding the graph; a graph that already
+    carries the flag simply gets the same answer back when the thresholds haven't moved.
+
+    'mask_coverage' is the running per-detection list the mapping stage maintains. For a
+    pcd written before that field existed it is reconstructed from 'mask', which stores
+    the same masks it was derived from -- more expensive, but this runs once per scan.
+    """
+    scene_diag = (scene_scale_diagonal(objects)
+                  if params.large_object_extent_ratio_thresh is not None else None)
+    for obj in objects:
+        if not obj.get("mask_coverage"):
+            obj["mask_coverage"] = [float(np.asarray(m).mean()) for m in obj.get("mask", [])]
+        obj["mask_coverage_stat"] = object_coverage_stat(obj, params.large_object_coverage_percentile)
+        obj["extent_ratio"] = (object_extent_ratio(obj, scene_diag)
+                               if params.large_object_extent_ratio_thresh is not None else None)
+        obj["is_large"] = is_large_object(obj, params, scene_diag)
 
 
 def bbox_center(obj):
@@ -313,7 +352,8 @@ def infer_hw(before_objs, after_objs):
 
 
 def classify_changes(before_objs, after_objs, matches, moved_threshold: float,
-                     before_visible_in_after, after_visible_in_before):
+                     before_visible_in_after, after_visible_in_before,
+                     exclude_large: bool = True):
     """
     Turn the match set into (moved_groups, removed_idx, added_idx).
 
@@ -347,7 +387,17 @@ def classify_changes(before_objs, after_objs, matches, moved_threshold: float,
         return float(np.linalg.norm(centers_b[i] - centers_a[j]))
 
     def is_trusted(obj):
-        return bool(obj.get("recognition_trusted", True))
+        # is_large joins recognition_trusted on exactly the same terms, and for a
+        # related reason. Walls, furniture and other large fixtures are never what
+        # changed -- across all 355 SceneDiff scene pairs, not one annotated object is
+        # a wall, floor, ceiling or window -- and they reconstruct too unstably between
+        # two scans for a difference in them to mean anything. Both flags withhold the
+        # right to ASSERT a change; neither withholds the object itself, which is why
+        # matching above ran over every object regardless. Dropping large objects at
+        # load time instead would be worse than useless: their genuine counterparts on
+        # the other side would be left unmatched and then asserted as added/removed.
+        return (bool(obj.get("recognition_trusted", True))
+                and not (exclude_large and bool(obj.get("is_large", False))))
 
     moved_pairs, removed_idx, added_idx = {}, [], []
 
@@ -597,9 +647,13 @@ def save_change_pointcloud_debug_image(pair_name, before_objs, after_objs, moved
 
 
 def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, exp_suffix: str,
-            cfg, max_match_distance: float, moved_threshold: float, sim_threshold: float):
-    before_objs, before_up_axis, before_up_direction = load_objects(concept_graphs_dir, "before", exp_suffix)
-    after_objs, after_up_axis, after_up_direction = load_objects(concept_graphs_dir, "after", exp_suffix)
+            cfg, max_match_distance: float, moved_threshold: float, sim_threshold: float,
+            exclude_large: bool = True):
+    # Built up front because load_objects needs it for the is_large backfill; the same
+    # instance is reused for the cross-visibility pass further down.
+    params = geometry_fusion_params_from_cfg(cfg)
+    before_objs, before_up_axis, before_up_direction = load_objects(concept_graphs_dir, "before", exp_suffix, params)
+    after_objs, after_up_axis, after_up_direction = load_objects(concept_graphs_dir, "after", exp_suffix, params)
     # before/after share one Pi3-estimated coordinate frame, so these should agree --
     # prefer "before"'s, falling back to "after"'s for pcd files saved before either
     # variant persisted this (see save_pointcloud()'s up_axis/up_direction params).
@@ -639,13 +693,13 @@ def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, 
     matches = geometric + semantic
 
     # A trusted object the other camera never had in view is not evidence of a change.
-    params = geometry_fusion_params_from_cfg(cfg)
     before_visible_in_after = count_cross_visibility(before_objs, cfg, pair_name, "after", params)
     after_visible_in_before = count_cross_visibility(after_objs, cfg, pair_name, "before", params)
 
     moved_groups, removed_idx, added_idx = classify_changes(
         before_objs, after_objs, matches, moved_threshold,
         before_visible_in_after, after_visible_in_before,
+        exclude_large=exclude_large,
     )
     object_masks, hw = build_object_masks(
         before_objs, after_objs, moved_groups, removed_idx, added_idx
@@ -707,6 +761,11 @@ def main():
                          help="Minimum semantic similarity (mean CLIP+DINO cosine over all frame pairs) to call two objects the same")
     parser.add_argument("--output_root", default=None,
                          help="Overrides the yaml's output_root, like output_root=... on rerun_realtime_mapping.py's CLI")
+    # Mirrors the yaml's scenediff_exclude_large_objects; default None means "use it".
+    parser.add_argument("--exclude_large", dest="exclude_large", action="store_true", default=None,
+                         help="Bar is_large objects from asserting added/removed/moved (they still match)")
+    parser.add_argument("--no_exclude_large", dest="exclude_large", action="store_false",
+                         help="Let is_large objects assert changes like any other object")
     args = parser.parse_args()
 
     loaded = _load_rerun_mapping_config(args.output_root)
@@ -725,6 +784,8 @@ def main():
         max_match_distance=pick(args.max_match_distance, "scenediff_max_match_distance"),
         moved_threshold=pick(args.moved_threshold, "scenediff_moved_threshold"),
         sim_threshold=pick(args.sim_threshold, "scenediff_semantic_sim_threshold"),
+        exclude_large=(bool(cfg.get("scenediff_exclude_large_objects", True))
+                       if args.exclude_large is None else args.exclude_large),
     )
 
 

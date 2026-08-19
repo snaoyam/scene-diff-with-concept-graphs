@@ -4,7 +4,7 @@ SCENE_PAIRS=($(python -c "import json; d=json.load(open('$JSON_FILE')); print('\
 
 SCENE_PAIRS=(
   living_room_17_living_room_18
-  bathroom_1_bathroom_2
+  # bathroom_1_bathroom_2
   # hallway_1_hallway_2
   # airhockeytable_1_airhockeytable_2
   # bedroom_1_bedroom_2

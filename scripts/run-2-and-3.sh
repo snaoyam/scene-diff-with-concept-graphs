@@ -7,7 +7,7 @@
 #
 # Usage: ./scripts/run-2-and-3.sh
 
-CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+CUDA_VISIBLE_DEVICES=6 #always only use GPU=6 and do not use any other GPU nodes
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/outputs"
 timestamp="$(date '+%Y-%m-%d_%H-%M-%S')"
