@@ -57,6 +57,10 @@ projection with every object colored by its classification -- unchanged (gray), 
 visible on the other side (light gray), moved (blue, with an arrow to its new
 position), removed (red), added (green). Always written, even when nothing changed --
 see save_change_pointcloud_debug_image().
+
+Also writes benchmark_data/debug_masks/{before,after}/: one image per scan frame, with
+added/removed/moved objects mask-overlaid in green/red/blue and every other frame left
+as the plain frame -- see save_debug_mask_visualizations().
 """
 import argparse
 import gzip
@@ -65,6 +69,7 @@ from pathlib import Path
 
 import hydra
 from conceptgraph.utils.general_utils import EXP_SUFFIX
+from conceptgraph.utils.vis import vis_numbered_masks
 from conceptgraph.slam.geometric_fusion import (
     is_large_object,
     object_coverage_stat,
@@ -86,6 +91,13 @@ from omegaconf import OmegaConf
 from pycocotools import mask as mask_utils
 
 AXIS_NAMES = ["X", "Y", "Z"]
+
+# BGR (cv2 drawing order), matching evaluate_multiview.py's own Removed/Added/Moved colors.
+CHANGE_COLORS_BGR = {
+    "removed": (0, 0, 255),
+    "added": (0, 255, 0),
+    "moved": (255, 0, 0),
+}
 
 
 def _load_rerun_mapping_config(output_root_override: str | None = None) -> dict:
@@ -646,6 +658,59 @@ def save_change_pointcloud_debug_image(pair_name, before_objs, after_objs, moved
     print(f"[{pair_name}] change pointcloud debug image -> {out_path}")
 
 
+def save_debug_mask_visualizations(pair_name: str, object_masks: dict, H: int, W: int,
+                                   cfg, out_dir: Path):
+    """One image per before/after frame into out_dir/{before,after}/ -- a mask overlay
+    (green=added, red=removed, blue=moved, each mask badged with its object id, so a
+    moved object's before/after position can be found by matching ids across the two
+    folders) for frames that show at least one changed object, and the plain frame for
+    every other frame, so the two folders together cover the whole scan rather than
+    only the frames with a change.
+
+    Frames are read through load_variant_dataset(cfg, pair_name, variant) -- the exact
+    same ConceptGraph dataset loader that built object_masks' frame_idx (image_idx) in
+    the first place -- rather than by re-extracting frames from the raw scene_diff
+    video files, which has no guarantee of lining up 1:1 with those indices (e.g. it
+    could reconstruct them from a different video file or a different starting frame
+    than the one the dataset was actually built from) and would draw masks on the
+    wrong image.
+    """
+    if not object_masks:
+        return
+
+    for video_key, variant in (("video_1", "before"), ("video_2", "after")):
+        frame_entries = {}
+        for obj_id, obj in object_masks.items():
+            if "video_1" in obj and "video_2" in obj:
+                change = "moved"
+            elif "video_1" in obj:
+                change = "removed"
+            else:
+                change = "added"
+            for frame_idx, mask_info in obj.get(video_key, {}).items():
+                frame_entries.setdefault(int(frame_idx), []).append((obj_id, mask_info["mask"], change))
+
+        dataset = load_variant_dataset(cfg, pair_name, variant)
+        variant_dir = out_dir / variant
+        variant_dir.mkdir(parents=True, exist_ok=True)
+        for frame_idx in range(len(dataset)):
+            entries = frame_entries.get(frame_idx, [])
+            color_tensor, *_ = dataset[frame_idx]
+            image_rgb = color_tensor.cpu().numpy().astype(np.uint8)
+            masks = (np.stack([mask_utils.decode(rle).astype(bool) for _, rle, _ in entries])
+                     if entries else np.zeros((0, H, W), dtype=bool))
+            ids = [obj_id for obj_id, _, _ in entries]
+            labels = [change for _, _, change in entries]
+            colors = [CHANGE_COLORS_BGR[change] for _, _, change in entries]
+            frame_name = Path(dataset.color_paths[frame_idx]).stem
+            # entries == [] draws no overlay -- vis_numbered_masks still writes the
+            # plain frame, so every frame in the scan gets an image either way.
+            vis_numbered_masks(image_rgb, masks, labels, variant_dir / f"{frame_name}.jpg",
+                                ids=ids, colors=colors)
+
+    print(f"[{pair_name}] debug mask visualizations -> {out_dir}")
+
+
 def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, exp_suffix: str,
             cfg, max_match_distance: float, moved_threshold: float, sim_threshold: float,
             exclude_large: bool = True):
@@ -729,6 +794,10 @@ def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "wb") as f:
         pickle.dump(result, f)
+
+    save_debug_mask_visualizations(
+        pair_name, object_masks, H, W, cfg, benchmark_data_dir / "debug_masks"
+    )
 
     n_trusted_b = sum(bool(o.get("recognition_trusted", True)) for o in before_objs)
     n_trusted_a = sum(bool(o.get("recognition_trusted", True)) for o in after_objs)
