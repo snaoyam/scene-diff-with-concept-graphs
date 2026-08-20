@@ -32,6 +32,7 @@ source "$SCRIPT_DIR/scene-pairs.sh"
 source "$SCRIPT_DIR/construct-concept-graphs.sh"
 source "$SCRIPT_DIR/convert-concept-graphs-to-scene-diff-benchmark-data.sh"
 source "$SCRIPT_DIR/run-scene-diff-benchmark.sh"
+source "$SCRIPT_DIR/combine-scene-vis-grid.sh"
 
 failed_scenes=()
 
@@ -72,22 +73,30 @@ for scene_id in "${SCENE_PAIRS[@]}"; do
         # 1. construct-concept-graphs.sh
         # 2. convert-concept-graphs-to-scene-diff-benchmark-data.sh
         # 3. run-scene-diff-benchmark.sh
-        echo "=== [$scene_id] 1/3 construct-concept-graphs ==="
+        # 4. combine-scene-vis-grid.sh
+        echo "=== [$scene_id] 1/4 construct-concept-graphs ==="
         if ! construct_concept_graphs "$scene_id"; then
             echo "[$scene_id] failed"
             failed_scenes+=("$scene_id")
             continue
         fi
 
-        echo "=== [$scene_id] 2/3 convert-concept-graphs-to-scene-diff-benchmark-data ==="
+        echo "=== [$scene_id] 2/4 convert-concept-graphs-to-scene-diff-benchmark-data ==="
         if ! convert_concept_graphs_to_scene_diff_benchmark_data "$scene_id"; then
             echo "[$scene_id] failed"
             failed_scenes+=("$scene_id")
             continue
         fi
 
-        echo "=== [$scene_id] 3/3 run-scene-diff-benchmark ==="
+        echo "=== [$scene_id] 3/4 run-scene-diff-benchmark ==="
         if ! run_scene_diff_benchmark "$scene_id"; then
+            echo "[$scene_id] failed"
+            failed_scenes+=("$scene_id")
+            continue
+        fi
+
+        echo "=== [$scene_id] 4/4 combine-scene-vis-grid ==="
+        if ! combine_scene_vis_grid "$scene_id"; then
             echo "[$scene_id] failed"
             failed_scenes+=("$scene_id")
             continue

@@ -8,8 +8,15 @@ video2 only -> added) -- the same derivation scene_diff/scripts/evaluate_multivi
 and concept-graphs/conceptgraph/slam/run_scene_diff_benchmark.py use for their own
 Removed/Added/Moved labels and debug visualizations.
 
+Only frame_idx values with frame_idx % resample_rate == 0 are rendered, saved as
+frame_{frame_idx // resample_rate:05d}.png -- the same subsampling
+scene_diff/data/scenediff_to_conceptgraph.py applies when building the ConceptGraph
+Dataset, and the same frame_idx -> actual_frame_index mapping
+scene_diff/scripts/evaluate_multiview.py's extract_ground_truth() uses. This makes
+frame_{i}.png line up directly with that Dataset's color/{i}.jpg.
+
 Usage:
-    python visualize_gt_masks.py --pair_name <pair_name> [--data_root ...] [--output_root ...]
+    python visualize_gt_masks.py --pair_name <pair_name> [--data_root ...] [--output_root ...] [--resample_rate 10]
 """
 import argparse
 import os
@@ -24,7 +31,7 @@ SCENE_DIFF_DIR = Path(os.environ.get(
     "SCENE_DIFF_ROOT", "/node_data/urp26su_dongwoo/concept-graphs-project/scene_diff"
 ))
 DEFAULT_DATA_ROOT = SCENE_DIFF_DIR / "data" / "scenediff_benchmark" / "data"
-DEFAULT_OUTPUT_ROOT = Path(__file__).resolve().parents[2] / "outputs"
+DEFAULT_OUTPUT_ROOT = Path(__file__).resolve().parents[2] / "ground-truth"
 
 # BGR (cv2 drawing order), matches concept-graphs/conceptgraph/slam/run_scene_diff_benchmark.py's
 # CHANGE_COLORS_BGR.
@@ -62,13 +69,16 @@ def classify_objects(video1_objects: dict, video2_objects: dict, objects_meta: l
     return result
 
 
-def collect_frame_entries(video_objects: dict, classification: dict) -> dict:
-    """{frame_idx: [(rle, color_bgr, text), ...]}"""
+def collect_frame_entries(video_objects: dict, classification: dict, resample_rate: int) -> dict:
+    """{frame_idx: [(rle, color_bgr, text), ...]}, keeping only frame_idx % resample_rate == 0."""
     frame_entries = {}
     for obj_id, frames in video_objects.items():
         color, _, text = classification[obj_id]
         for frame_idx, rle in frames.items():
-            frame_entries.setdefault(int(frame_idx), []).append((rle, color, text))
+            frame_idx = int(frame_idx)
+            if frame_idx % resample_rate != 0:
+                continue
+            frame_entries.setdefault(frame_idx, []).append((rle, color, text))
     return frame_entries
 
 
@@ -94,28 +104,29 @@ def draw_masks(frame_bgr: np.ndarray, entries: list) -> np.ndarray:
     return img
 
 
-def render_video(video_path: Path, frame_entries: dict, out_dir: Path) -> int:
-    """Sequentially decodes video_path and writes an annotated PNG for every frame_idx
-    present in frame_entries. Sequential cap.read() is used instead of random-access
-    cap.set(CAP_PROP_POS_FRAMES, ...), which can land on the wrong frame for some codecs."""
-    if not frame_entries:
-        return 0
+def render_video(video_path: Path, frame_entries: dict, out_dir: Path, resample_rate: int) -> int:
+    """Sequentially decodes video_path and writes a PNG for every frame_idx with
+    frame_idx % resample_rate == 0, named by out_idx = frame_idx // resample_rate so it
+    lines up with the ConceptGraph Dataset's color/{out_idx}.jpg -- annotated with masks
+    where frame_entries has any, otherwise the raw frame. Sequential cap.read() is used
+    instead of random-access cap.set(CAP_PROP_POS_FRAMES, ...), which can land on the
+    wrong frame for some codecs."""
     out_dir.mkdir(parents=True, exist_ok=True)
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"failed to open {video_path}")
 
-    max_idx = max(frame_entries)
     saved = 0
     frame_idx = 0
-    while frame_idx <= max_idx:
+    while True:
         ok, frame_bgr = cap.read()
         if not ok:
             break
-        entries = frame_entries.get(frame_idx)
-        if entries:
-            annotated = draw_masks(frame_bgr, entries)
-            cv2.imwrite(str(out_dir / f"frame_{frame_idx:05d}.png"), annotated)
+        if frame_idx % resample_rate == 0:
+            entries = frame_entries.get(frame_idx)
+            annotated = draw_masks(frame_bgr, entries) if entries else frame_bgr
+            out_idx = frame_idx // resample_rate
+            cv2.imwrite(str(out_dir / f"{out_idx}.png"), annotated)
             saved += 1
         frame_idx += 1
     cap.release()
@@ -127,7 +138,7 @@ def render_video(video_path: Path, frame_entries: dict, out_dir: Path) -> int:
     return saved
 
 
-def visualize_pair(pair_name: str, data_root: Path, output_root: Path) -> None:
+def visualize_pair(pair_name: str, data_root: Path, output_root: Path, resample_rate: int) -> None:
     pair_dir = data_root / pair_name
     with open(pair_dir / "segments.pkl", "rb") as f:
         gt = pickle.load(f)
@@ -139,10 +150,10 @@ def visualize_pair(pair_name: str, data_root: Path, output_root: Path) -> None:
     n_moved = sum(1 for _, change, _ in classification.values() if change == "moved")
 
     out_dir = output_root / pair_name / "gt_mask_viz"
-    n1 = render_video(find_video(pair_dir, 1), collect_frame_entries(video1_objects, classification),
-                       out_dir / "video1")
-    n2 = render_video(find_video(pair_dir, 2), collect_frame_entries(video2_objects, classification),
-                       out_dir / "video2")
+    n1 = render_video(find_video(pair_dir, 1), collect_frame_entries(video1_objects, classification, resample_rate),
+                       out_dir / "before", resample_rate)
+    n2 = render_video(find_video(pair_dir, 2), collect_frame_entries(video2_objects, classification, resample_rate),
+                       out_dir / "after", resample_rate)
 
     print(f"[{pair_name}] added={n_added} removed={n_removed} moved={n_moved} "
           f"-> {n1} video1 frames, {n2} video2 frames saved to {out_dir}")
@@ -153,9 +164,12 @@ def main():
     parser.add_argument("--pair_name", required=True)
     parser.add_argument("--data_root", default=str(DEFAULT_DATA_ROOT))
     parser.add_argument("--output_root", default=str(DEFAULT_OUTPUT_ROOT))
+    parser.add_argument("--resample_rate", type=int, default=10,
+                         help="Keep only frame_idx %% resample_rate == 0, matching "
+                              "scenediff_to_conceptgraph.py's --resample_rate used to build the Dataset")
     args = parser.parse_args()
 
-    visualize_pair(args.pair_name, Path(args.data_root), Path(args.output_root))
+    visualize_pair(args.pair_name, Path(args.data_root), Path(args.output_root), args.resample_rate)
 
 
 if __name__ == "__main__":

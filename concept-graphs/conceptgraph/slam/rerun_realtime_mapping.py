@@ -24,7 +24,6 @@ import supervision as sv
 from collections import Counter
 
 # Local application/library specific imports
-from conceptgraph.utils.combine_frame_viz import combine_frame_viz
 from conceptgraph.utils.optional_wandb_wrapper import OptionalWandB
 from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker
 from conceptgraph.utils.vlm import consolidate_captions, get_openai_client
@@ -367,6 +366,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
 
     scenegraph_color_cache = {}
     scenegraph_viz_out_path = exp_out_path / "scenegraph_viz"
+    scenegraph_viz_with_edges_out_path = exp_out_path / "scenegraph_viz_with_edges"
 
     # Three per-frame mask overlays, one per pipeline stage, all numbered so a specific
     # object can be named by eye when reporting a detection problem. The names are the
@@ -388,21 +388,22 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     #                      post-loop map. So watching the frames in order shows objects
     #                      progressively merging (two masks/numbers becoming one) instead
     #                      of only ever showing the finished result. Masks that already
-    #                      fused into one node this frame are unioned into one mask. An
-    #                      object with no fresh 2D detection this frame (nothing in
-    #                      obj['image_idx'] matches frame_idx -- e.g. the detector missed
-    #                      it) is still drawn if it would be visible from this frame's
-    #                      camera: its stored world-frame point cloud is reprojected via
-    #                      geometric_fusion.projected_footprint() (in-frustum, unoccluded
-    #                      per the frame's own depth map, then morphologically closed into
-    #                      a filled footprint) and drawn with its class name suffixed
-    #                      "-r" so it reads as a geometric guess, not a real
-    #                      detection. Objects with too few visible points (below
-    #                      fusion_min_visible_points) or nothing in frustum are skipped
-    #                      that frame, same as before. Numbered by curr_obj_num (stable
-    #                      once an object is created, even across merges), but colors are
-    #                      positional per frame like detected_masks/filtered_masks -- not
-    #                      fixed across frames.
+    #                      fused into one node this frame are unioned into one mask. Only
+    #                      objects with a fresh 2D detection this frame (obj['image_idx']
+    #                      matches frame_idx) are drawn.
+    #   fused_masks_with_nodes/ -- the same snapshot as fused_masks/, plus objects with
+    #                      no fresh 2D detection this frame (the detector missed it, or
+    #                      it just hasn't been reached yet): its stored world-frame point
+    #                      cloud is reprojected via geometric_fusion.projected_footprint()
+    #                      (in-frustum, unoccluded per the frame's own depth map, then
+    #                      morphologically closed into a filled footprint) and drawn with
+    #                      its class name suffixed "-r" so it reads as a geometric guess,
+    #                      not a real detection. Objects with too few visible points
+    #                      (below fusion_min_visible_points) or nothing in frustum are
+    #                      skipped that frame, same as before.
+    #   Both are numbered by curr_obj_num (stable once an object is created, even across
+    #                      merges), but colors are positional per frame like
+    #                      detected_masks/filtered_masks -- not fixed across frames.
     # detected/filtered separate "never detected" from "detected, then filtered out";
     # filtered/fused separate "still a separate detection" from "still a separate object".
     # All three are written on cached-detection runs too: the saved .pkl.gz holds the
@@ -411,9 +412,11 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     detected_masks_out_path = exp_out_path / "detected_masks"
     filtered_masks_out_path = exp_out_path / "filtered_masks"
     fused_masks_out_path = exp_out_path / "fused_masks"
+    fused_masks_with_nodes_out_path = exp_out_path / "fused_masks_with_nodes"
     detected_masks_out_path.mkdir(parents=True, exist_ok=True)
     filtered_masks_out_path.mkdir(parents=True, exist_ok=True)
     fused_masks_out_path.mkdir(parents=True, exist_ok=True)
+    fused_masks_with_nodes_out_path.mkdir(parents=True, exist_ok=True)
 
     # Resolved once per scene (see slam/geometric_fusion.py). Used both by geometry-only
     # fusion's own per-frame gating and by write_progressive_fused_mask() below, which
@@ -445,9 +448,9 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         # silently vanish from this debug view. Suffixed "-r" in the label so
         # it's visually distinguishable from a mask backed by an actual detection.
         #
-        # Rendered as a side-by-side composite -- left panel real detections only,
-        # right panel real+reprojected together -- so the "-r" guesses' effect on the
-        # debug view is visible without occluding the ground-truth left panel.
+        # Written as two separate images -- fused_masks/ real detections only,
+        # fused_masks_with_nodes/ real+reprojected together -- so the "-r" guesses'
+        # effect is visible without occluding the ground-truth-only view.
         frame_objects = []
         for obj in objects:
             # "-L" marks an object the size rule has excluded (annotate_large_objects):
@@ -486,10 +489,10 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         all_labels = [o['class_name'] for o in frame_objects]
         all_ids = [o['obj_num'] for o in frame_objects]
 
-        right_panel = _annotate_numbered_masks(
+        with_nodes = _annotate_numbered_masks(
             image_rgb, all_masks, all_labels, ids=all_ids, colors=colors,
         )
-        left_panel = _annotate_numbered_masks(
+        real_only = _annotate_numbered_masks(
             image_rgb,
             all_masks[real_indices] if real_indices
             else np.zeros((0, *image_rgb.shape[:2]), dtype=bool),
@@ -498,10 +501,9 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             colors=colors[real_indices] if real_indices else np.zeros((0, 3), colors.dtype),
         )
 
-        composite = cv2.hconcat([left_panel, right_panel])
-        save_path = (fused_masks_out_path / color_path.name).with_suffix(".jpg")
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(save_path), composite)
+        save_name = color_path.with_suffix(".jpg").name
+        cv2.imwrite(str(fused_masks_out_path / save_name), real_only)
+        cv2.imwrite(str(fused_masks_with_nodes_out_path / save_name), with_nodes)
 
     exit_early_flag = False
     counter = 0
@@ -973,6 +975,7 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             frame_objects,
             frame_edges,
             scenegraph_viz_out_path / f"{color_path.stem}_viz.png",
+            scenegraph_viz_with_edges_out_path / f"{color_path.stem}_viz.png",
             scenegraph_color_cache,
         )
 
@@ -1011,8 +1014,6 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         title=f"{cfg.scene_id} / {EXP_SUFFIX}",
     )
     print(f"Saved full scene graph to {full_scenegraph_path} version: {VERSION_TEXT}")
-
-    combine_frame_viz(exp_out_path)
 
     # Save metadata if all frames are saved
     if cfg.save_objects_all_frames:
