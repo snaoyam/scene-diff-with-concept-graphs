@@ -365,7 +365,8 @@ def infer_hw(before_objs, after_objs):
 
 def classify_changes(before_objs, after_objs, matches, moved_threshold: float,
                      before_visible_in_after, after_visible_in_before,
-                     exclude_large: bool = True):
+                     exclude_large: bool = True,
+                     ignore_confidence_and_visibility: bool = False):
     """
     Turn the match set into (moved_groups, removed_idx, added_idx).
 
@@ -373,6 +374,14 @@ def classify_changes(before_objs, after_objs, matches, moved_threshold: float,
     object whose recognition evidence was too thin to trust cannot assert that
     something was removed or added, but is still a perfectly good thing for the other
     side to match against, which is why matching used every object regardless.
+
+    ignore_confidence_and_visibility: ablation switch (see
+    ablation_disable_confidence_visibility_filter in the hydra config). When True,
+    recognition_trusted is ignored (every object may assert added/removed/moved,
+    subject only to exclude_large) and the cross-visibility gate below is skipped
+    (a trusted object with no match is asserted removed/added even if the other
+    scan's camera never looked there). is_large exclusion is unaffected -- that is a
+    separate mechanism, not part of this ablation.
 
         trusted before object, no match  -> removed
         trusted after  object, no match  -> added
@@ -408,6 +417,8 @@ def classify_changes(before_objs, after_objs, matches, moved_threshold: float,
         # matching above ran over every object regardless. Dropping large objects at
         # load time instead would be worse than useless: their genuine counterparts on
         # the other side would be left unmatched and then asserted as added/removed.
+        if ignore_confidence_and_visibility:
+            return not (exclude_large and bool(obj.get("is_large", False)))
         return (bool(obj.get("recognition_trusted", True))
                 and not (exclude_large and bool(obj.get("is_large", False))))
 
@@ -418,7 +429,7 @@ def classify_changes(before_objs, after_objs, matches, moved_threshold: float,
             continue
         counterparts = before_matches.get(i, [])
         if not counterparts:
-            if before_visible_in_after[i] > 0:
+            if ignore_confidence_and_visibility or before_visible_in_after[i] > 0:
                 removed_idx.append(i)
             continue
         if any(travelled(i, j) <= moved_threshold for j in counterparts):
@@ -431,7 +442,7 @@ def classify_changes(before_objs, after_objs, matches, moved_threshold: float,
             continue
         counterparts = after_matches.get(j, [])
         if not counterparts:
-            if after_visible_in_before[j] > 0:
+            if ignore_confidence_and_visibility or after_visible_in_before[j] > 0:
                 added_idx.append(j)
             continue
         if any(travelled(i, j) <= moved_threshold for i in counterparts):
@@ -713,7 +724,7 @@ def save_debug_mask_visualizations(pair_name: str, object_masks: dict, H: int, W
 
 def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, exp_suffix: str,
             cfg, max_match_distance: float, moved_threshold: float, sim_threshold: float,
-            exclude_large: bool = True):
+            exclude_large: bool = True, ignore_confidence_and_visibility: bool = False):
     # Built up front because load_objects needs it for the is_large backfill; the same
     # instance is reused for the cross-visibility pass further down.
     params = geometry_fusion_params_from_cfg(cfg)
@@ -765,6 +776,7 @@ def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, 
         before_objs, after_objs, matches, moved_threshold,
         before_visible_in_after, after_visible_in_before,
         exclude_large=exclude_large,
+        ignore_confidence_and_visibility=ignore_confidence_and_visibility,
     )
     object_masks, hw = build_object_masks(
         before_objs, after_objs, moved_groups, removed_idx, added_idx
@@ -835,6 +847,17 @@ def main():
                          help="Bar is_large objects from asserting added/removed/moved (they still match)")
     parser.add_argument("--no_exclude_large", dest="exclude_large", action="store_false",
                          help="Let is_large objects assert changes like any other object")
+    # Mirrors the yaml's ablation_disable_confidence_visibility_filter; default None
+    # means "use it". See classify_changes' ignore_confidence_and_visibility.
+    parser.add_argument("--ablation_disable_confidence_visibility_filter",
+                         dest="ablation_disable_confidence_visibility_filter",
+                         action="store_true", default=None,
+                         help="Ablation: ignore recognition_trusted and cross-visibility "
+                              "when asserting added/removed/moved")
+    parser.add_argument("--no_ablation_disable_confidence_visibility_filter",
+                         dest="ablation_disable_confidence_visibility_filter",
+                         action="store_false",
+                         help="Disable the ablation above; use recognition/visibility filtering as normal")
     args = parser.parse_args()
 
     loaded = _load_rerun_mapping_config(args.output_root)
@@ -855,6 +878,11 @@ def main():
         sim_threshold=pick(args.sim_threshold, "scenediff_semantic_sim_threshold"),
         exclude_large=(bool(cfg.get("scenediff_exclude_large_objects", True))
                        if args.exclude_large is None else args.exclude_large),
+        ignore_confidence_and_visibility=(
+            bool(cfg.get("ablation_disable_confidence_visibility_filter", False))
+            if args.ablation_disable_confidence_visibility_filter is None
+            else args.ablation_disable_confidence_visibility_filter
+        ),
     )
 
 

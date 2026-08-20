@@ -7,8 +7,12 @@
 # conceptgraph/slam/rerun_realtime_mapping.py's main()).
 #
 # Usage:
-#   construct_concept_graphs <pair_name>
-#   ./construct-concept-graphs.sh <pair_name>
+#   construct_concept_graphs <pair_name> [extra hydra overrides...]
+#   ./construct-concept-graphs.sh <pair_name> [extra hydra overrides...]
+#
+# Extra args (e.g. ablation_disable_vocabulary_discovery=true -- see
+# scripts/run_ablation.sh) are forwarded straight onto rerun_realtime_mapping.py's own
+# hydra CLI, after scene_pair= and output_root=.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONCEPT_GRAPHS_DIR="$(cd "${CONCEPT_GRAPHS_ROOT:-$SCRIPT_DIR/../concept-graphs}" && pwd)"
@@ -18,18 +22,19 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-}"
 
 construct_concept_graphs() {
     local pair_name="$1"
+    shift
     local output_root_arg=()
     [[ -n "$OUTPUT_ROOT" ]] && output_root_arg=("output_root=${OUTPUT_ROOT}")
     (cd "$CONCEPT_GRAPHS_DIR" && \
         PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" \
-        python conceptgraph/slam/rerun_realtime_mapping.py "scene_pair=${pair_name}" "${output_root_arg[@]}")
+        python conceptgraph/slam/rerun_realtime_mapping.py "scene_pair=${pair_name}" "${output_root_arg[@]}" "$@")
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     set -euo pipefail
-    if [[ $# -ne 1 ]]; then
-        echo "Usage: $(basename "$0") <pair_name>" >&2
+    if [[ $# -lt 1 ]]; then
+        echo "Usage: $(basename "$0") <pair_name> [extra hydra overrides...]" >&2
         exit 1
     fi
-    construct_concept_graphs "$1"
+    construct_concept_graphs "$@"
 fi

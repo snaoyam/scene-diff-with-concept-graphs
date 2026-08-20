@@ -6,6 +6,7 @@ The script is used to model Grounded SAM detections in 3D, it assumes the tag2te
 import os
 import copy
 import logging
+import shutil
 import uuid
 from pathlib import Path
 import pickle
@@ -69,11 +70,22 @@ from conceptgraph.slam.utils import (
     make_detection_list_from_pcd_and_gobs,
     denoise_objects,
     detections_to_obj_pcd_and_bbox,
+    merge_objects,
     prepare_objects_save_vis,
     process_cfg,
     process_pcd,
     processing_needed,
     resize_gobs
+)
+# Ablation-only: pre-geometry-only-fusion association/merge (see
+# ablation_disable_geometry_only_fusion in the hydra config and its call site below).
+# Kept working but unused by the default pipeline since geometry-only fusion replaced it.
+from conceptgraph.slam.mapping import (
+    compute_spatial_similarities,
+    compute_visual_similarities,
+    aggregate_similarities,
+    match_detections_to_objects,
+    merge_obj_matches,
 )
 from conceptgraph.slam.geometric_fusion import (
     annotate_large_objects,
@@ -250,34 +262,45 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         # was already confirmed to exist in the scene from silently missing from
         # "after" just because its own VLM/SAM discovery pass happened not to
         # re-surface it.
-        extra_vocab_paths = None
-        if cfg.scene_variant == "after":
-            before_concept_graphs_scene_id = f"{cfg.scene_pair}/concept_graphs/before"
-            before_det_exp_path = get_exp_out_path(
-                cfg.output_root, before_concept_graphs_scene_id, DETECTIONS_EXP_SUFFIX,
-                make_dir=False, exps_dir_name=cfg.exps_dir_name,
+        if cfg.ablation_disable_vocabulary_discovery:
+            # Ablation: skip scene-specific vocabulary discovery entirely and fall back
+            # to the fixed ScanNet200 class list every scene used before
+            # discover_scene_vocabulary() replaced it -- see the hydra config's
+            # ablation_disable_vocabulary_discovery comment. Written to
+            # discovered_classes_path (rather than pointed at directly) so the caching
+            # branch below (run_detections=False) needs no changes either way.
+            discovered_classes_path = get_discovered_classes_path(det_exp_path)
+            discovered_classes_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(cfg.ablation_fixed_vocabulary_classes_file, discovered_classes_path)
+        else:
+            extra_vocab_paths = None
+            if cfg.scene_variant == "after":
+                before_concept_graphs_scene_id = f"{cfg.scene_pair}/concept_graphs/before"
+                before_det_exp_path = get_exp_out_path(
+                    cfg.output_root, before_concept_graphs_scene_id, DETECTIONS_EXP_SUFFIX,
+                    make_dir=False, exps_dir_name=cfg.exps_dir_name,
+                )
+                extra_vocab_paths = [get_discovered_classes_path(before_det_exp_path)]
+            discovered_classes_path = discover_scene_vocabulary(
+                dataset=dataset,
+                sam_predictor=sam_predictor,
+                openai_client=openai_client,
+                det_exp_path=det_exp_path,
+                detections_exp_suffix=DETECTIONS_EXP_SUFFIX,
+                voxel_size=cfg.discovery_voxel_size,
+                pixel_stride=cfg.discovery_pixel_stride,
+                max_representative_frames=cfg.discovery_max_representative_frames,
+                sam_conf=cfg.discovery_sam_conf,
+                sam_min_segment_area_px=cfg.discovery_sam_min_segment_area_px,
+                sam_max_segment_area_ratio=cfg.discovery_sam_max_segment_area_ratio,
+                sam_max_segments_per_frame=cfg.discovery_sam_max_segments_per_frame,
+                device=cfg.device,
+                extra_vocab_paths=extra_vocab_paths,
             )
-            extra_vocab_paths = [get_discovered_classes_path(before_det_exp_path)]
-        discovered_classes_path = discover_scene_vocabulary(
-            dataset=dataset,
-            sam_predictor=sam_predictor,
-            openai_client=openai_client,
-            det_exp_path=det_exp_path,
-            detections_exp_suffix=DETECTIONS_EXP_SUFFIX,
-            voxel_size=cfg.discovery_voxel_size,
-            pixel_stride=cfg.discovery_pixel_stride,
-            max_representative_frames=cfg.discovery_max_representative_frames,
-            sam_conf=cfg.discovery_sam_conf,
-            sam_min_segment_area_px=cfg.discovery_sam_min_segment_area_px,
-            sam_max_segment_area_ratio=cfg.discovery_sam_max_segment_area_ratio,
-            sam_max_segments_per_frame=cfg.discovery_sam_max_segments_per_frame,
-            device=cfg.device,
-            extra_vocab_paths=extra_vocab_paths,
-        )
-        # discover_scene_vocabulary's SAM "segment everything" pass can reserve
-        # large allocator blocks (many masks/frame); release what's unused before
-        # the per-frame main loop starts.
-        torch.cuda.empty_cache()
+            # discover_scene_vocabulary's SAM "segment everything" pass can reserve
+            # large allocator blocks (many masks/frame); release what's unused before
+            # the per-frame main loop starts.
+            torch.cuda.empty_cache()
         obj_classes = ObjectClasses(
             classes_file_path=discovered_classes_path,
             bg_classes=detections_exp_cfg['bg_classes'],
@@ -423,6 +446,12 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
     # reprojects objects with no fresh detection this frame.
     geo_fusion_params = geometry_fusion_params_from_cfg(cfg)
     fusion_debug = FusionDebugWriter(exp_out_path / "fusion_debug")
+
+    # Ablation: revert same-scan object fusion to the pre-geometry-only method (3D-bbox
+    # spatial similarity + CLIP visual similarity, sim_sum-matched and merged per frame,
+    # plus a periodic overlap/appearance merge pass) -- see
+    # ablation_disable_geometry_only_fusion in the hydra config.
+    use_legacy_fusion = bool(cfg.ablation_disable_geometry_only_fusion)
 
     # How much SAM speckle the cleanup took out this scan. detected_masks/ draws the
     # cleaned masks, so this summary is the only place the effect is visible.
@@ -758,25 +787,70 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             write_progressive_fused_mask()
             continue
 
-        # Geometry-only association: bbox -> directional point overlap -> normal
-        # consistency, fusing with every existing node that passes. No empty-map
-        # special case is needed -- with no objects yet, every detection simply
-        # falls through to "new object".
-        objects = fuse_detections_geometry_only(
-            detection_list=detection_list,
-            objects=objects,
-            params=geo_fusion_params,
-            frame_idx=frame_idx,
-            # Lets the point gate ask what this camera should have seen of each
-            # existing object, so a large or mostly-unobserved object isn't
-            # penalised by the parts no viewpoint could have covered.
-            view=frame_view,
-            debug=fusion_debug,
-        )
-        # fuse_detections_geometry_only returns a new MapObjectList rather than
-        # mutating in place, so map_edges' reference has to follow it
-        # (build_final_object_graph indexes map_edges.objects when adding edges).
-        map_edges.update_objects_list(objects)
+        if use_legacy_fusion:
+            # Ablation: pre-geometry-only fusion. If no objects yet, every detection
+            # this frame just becomes a new object (no similarity to compute against).
+            if len(objects) == 0:
+                objects.extend(detection_list)
+                tracker.increment_total_objects(len(detection_list))
+                owandb.log({
+                    "total_objects_so_far": tracker.get_total_objects(),
+                    "objects_this_frame": len(detection_list),
+                })
+                write_progressive_fused_mask()
+                continue
+
+            spatial_sim = compute_spatial_similarities(
+                spatial_sim_type=cfg['spatial_sim_type'],
+                detection_list=detection_list,
+                objects=objects,
+                downsample_voxel_size=cfg['downsample_voxel_size'],
+            )
+            visual_sim = compute_visual_similarities(detection_list, objects)
+            agg_sim = aggregate_similarities(
+                match_method=cfg['ablation_match_method'],
+                phys_bias=cfg['ablation_phys_bias'],
+                spatial_sim=spatial_sim,
+                visual_sim=visual_sim,
+            )
+            match_indices = match_detections_to_objects(
+                agg_sim=agg_sim,
+                detection_threshold=cfg['ablation_sim_threshold'],
+            )
+            objects = merge_obj_matches(
+                detection_list=detection_list,
+                objects=objects,
+                match_indices=match_indices,
+                downsample_voxel_size=cfg['downsample_voxel_size'],
+                dbscan_remove_noise=cfg['dbscan_remove_noise'],
+                dbscan_eps=cfg['dbscan_eps'],
+                dbscan_min_points=cfg['dbscan_min_points'],
+                spatial_sim_type=cfg['spatial_sim_type'],
+                device=cfg['device'],
+            )
+            # merge_obj_matches mutates `objects` in place (append/replace), so unlike
+            # fuse_detections_geometry_only below, map_edges' reference stays valid --
+            # no update_objects_list() needed.
+        else:
+            # Geometry-only association: bbox -> directional point overlap -> normal
+            # consistency, fusing with every existing node that passes. No empty-map
+            # special case is needed -- with no objects yet, every detection simply
+            # falls through to "new object".
+            objects = fuse_detections_geometry_only(
+                detection_list=detection_list,
+                objects=objects,
+                params=geo_fusion_params,
+                frame_idx=frame_idx,
+                # Lets the point gate ask what this camera should have seen of each
+                # existing object, so a large or mostly-unobserved object isn't
+                # penalised by the parts no viewpoint could have covered.
+                view=frame_view,
+                debug=fusion_debug,
+            )
+            # fuse_detections_geometry_only returns a new MapObjectList rather than
+            # mutating in place, so map_edges' reference has to follow it
+            # (build_final_object_graph indexes map_edges.objects when adding edges).
+            map_edges.update_objects_list(objects)
         # fix the class names for objects
         # they should be the most popular name, not the first name
         for idx, obj in enumerate(objects):
@@ -801,14 +875,54 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
             is_final_frame,
         ):
             objects = measure_time(denoise_objects)(
-                downsample_voxel_size=cfg['downsample_voxel_size'], 
-                dbscan_remove_noise=cfg['dbscan_remove_noise'], 
-                dbscan_eps=cfg['dbscan_eps'], 
-                dbscan_min_points=cfg['dbscan_min_points'], 
-                spatial_sim_type=cfg['spatial_sim_type'], 
-                device=cfg['device'], 
+                downsample_voxel_size=cfg['downsample_voxel_size'],
+                dbscan_remove_noise=cfg['dbscan_remove_noise'],
+                dbscan_eps=cfg['dbscan_eps'],
+                dbscan_min_points=cfg['dbscan_min_points'],
+                spatial_sim_type=cfg['spatial_sim_type'],
+                device=cfg['device'],
                 objects=objects
             )
+
+        # Ablation only: geometry-only fusion does its consolidation once, after the
+        # whole scan (global_geometry_consolidation below), instead of this periodic
+        # overlap/appearance merge pass.
+        if use_legacy_fusion and processing_needed(
+            cfg["ablation_merge_interval"],
+            cfg["ablation_run_merge_final_frame"],
+            frame_idx,
+            is_final_frame,
+        ):
+            if cfg["make_edges"]:
+                objects, map_edges = measure_time(merge_objects)(
+                    merge_overlap_thresh=cfg["ablation_merge_overlap_thresh"],
+                    merge_visual_sim_thresh=cfg["ablation_merge_visual_sim_thresh"],
+                    merge_text_sim_thresh=cfg["ablation_merge_text_sim_thresh"],
+                    objects=objects,
+                    downsample_voxel_size=cfg["downsample_voxel_size"],
+                    dbscan_remove_noise=cfg["dbscan_remove_noise"],
+                    dbscan_eps=cfg["dbscan_eps"],
+                    dbscan_min_points=cfg["dbscan_min_points"],
+                    spatial_sim_type=cfg["spatial_sim_type"],
+                    device=cfg["device"],
+                    do_edges=True,
+                    map_edges=map_edges,
+                )
+            else:
+                objects = measure_time(merge_objects)(
+                    merge_overlap_thresh=cfg["ablation_merge_overlap_thresh"],
+                    merge_visual_sim_thresh=cfg["ablation_merge_visual_sim_thresh"],
+                    merge_text_sim_thresh=cfg["ablation_merge_text_sim_thresh"],
+                    objects=objects,
+                    downsample_voxel_size=cfg["downsample_voxel_size"],
+                    dbscan_remove_noise=cfg["dbscan_remove_noise"],
+                    dbscan_eps=cfg["dbscan_eps"],
+                    dbscan_min_points=cfg["dbscan_min_points"],
+                    spatial_sim_type=cfg["spatial_sim_type"],
+                    device=cfg["device"],
+                    do_edges=False,
+                    map_edges=None,
+                )
 
         write_progressive_fused_mask()
 
@@ -876,16 +990,20 @@ def run_mapping_for_scene(cfg: DictConfig, shared_models=None):
         print(f"Dropped {n_before_drop - len(objects)} unconfirmed 'before'-seeded objects "
               f"(no real detection merged into them this scan).")
 
-    # No periodic merging happens during the scan, so object-object merging happens
-    # here, once, over the surviving objects -- repeated until a full sweep finds no
-    # mergeable pair, recomputing candidates/overlaps whenever a merge changes an
-    # object's geometry.
-    objects = measure_time(global_geometry_consolidation)(
-        objects=objects,
-        params=geo_fusion_params,
-        debug=fusion_debug,
-    )
-    map_edges.update_objects_list(objects)
+    # No periodic merging happens during the scan (in geometry-only fusion mode), so
+    # object-object merging happens here, once, over the surviving objects -- repeated
+    # until a full sweep finds no mergeable pair, recomputing candidates/overlaps
+    # whenever a merge changes an object's geometry. Skipped under
+    # ablation_disable_geometry_only_fusion: that mode already did its consolidation
+    # via the periodic merge_objects() pass above, and global_geometry_consolidation's
+    # normal-consistency gate is calibrated for geometry-only fusion's own candidates.
+    if not use_legacy_fusion:
+        objects = measure_time(global_geometry_consolidation)(
+            objects=objects,
+            params=geo_fusion_params,
+            debug=fusion_debug,
+        )
+        map_edges.update_objects_list(objects)
 
     # Every object's geometry is final now, which this metric needs -- run it before
     # objects can change any further and while fusion_debug is still open to log into.

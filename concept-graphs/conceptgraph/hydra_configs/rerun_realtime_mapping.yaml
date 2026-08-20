@@ -363,6 +363,32 @@ fusion_exclude_large_from_fusion: !!bool True
 # that risk. null disables.
 fusion_containment_weak_min: 0.15
 
+# Ablation: revert same-scan object fusion from geometry-only back to the original
+# ConceptGraph method it replaced -- per-frame 3D-bbox spatial similarity + CLIP
+# visual similarity (sim_sum-aggregated), matched greedily and merged, plus a
+# periodic overlap/appearance consolidation pass (instead of geometry-only fusion's
+# single post-scan global_geometry_consolidation). See fuse_detections_geometry_only
+# vs. mapping.py's compute_spatial_similarities/compute_visual_similarities/
+# aggregate_similarities/match_detections_to_objects/merge_obj_matches, both wired
+# into slam/rerun_realtime_mapping.py's per-frame fusion call site.
+ablation_disable_geometry_only_fusion: !!bool False
+ablation_match_method: "sim_sum"    # aggregate_similarities' only supported mode
+ablation_phys_bias: 0.0             # sim_sum weighting between spatial_sim and visual_sim
+ablation_sim_threshold: 1.2         # match_detections_to_objects' detection_threshold on agg_sim
+ablation_merge_interval: 5          # run the periodic overlap/appearance merge every k frames
+ablation_run_merge_final_frame: !!bool True
+ablation_merge_overlap_thresh: 0.7      # -1 disables the periodic merge pass entirely
+ablation_merge_visual_sim_thresh: 0.7   # merge only if CLIP visual similarity also clears this
+ablation_merge_text_sim_thresh: 0.7     # merge only if class-name text similarity also clears this
+
+# Ablation: ignore recognition_trusted (object confidence) and the cross-visibility
+# gate in the before/after comparison (convert_concept_graphs_to_scene_diff_benchmark_data.py's
+# classify_changes) -- every object, however weak its evidence, may assert
+# added/removed/moved, and a trusted object the other scan's camera never saw is
+# asserted removed/added instead of left unchanged. is_large exclusion
+# (scenediff_exclude_large_objects) is a separate mechanism and unaffected.
+ablation_disable_confidence_visibility_filter: !!bool False
+
 # ---- before/after comparison (convert_concept_graphs_to_scene_diff_benchmark_data.py,
 #      which reads this same yaml via hydra.compose; CLI flags there override these) ----
 #
@@ -444,6 +470,19 @@ discovery_sam_max_segment_area_ratio: 0.85  # drop near-whole-frame segments (wa
                                              # to max_bbox_area_ratio but a separate knob for this stage
 discovery_sam_max_segments_per_frame: 60    # hard cap on segments kept per frame after filtering (keeps
                                              # the largest); primary lever for bounding VLM call volume
+
+# ---- Ablation switches ----
+# Isolate each of the three pipeline changes (scene-specific vocabulary discovery,
+# geometry-only fusion, confidence/visibility filtering) by reverting just that one
+# to its pre-improvement behaviour, so its individual contribution to the SceneDiff
+# benchmark score can be measured. All three default to False (full pipeline).
+
+# Skip discover_scene_vocabulary() and use this fixed classes file instead -- the
+# exact ScanNet200 list every scene used before per-scene discovery replaced it.
+# Written into the same discovered_classes.txt cache discovery would have produced,
+# so the run_detections=False (cached-detections) branch needs no changes either way.
+ablation_disable_vocabulary_discovery: !!bool False
+ablation_fixed_vocabulary_classes_file: ${repo_root}/conceptgraph/scannet200_classes.txt
 
 bg_classes: ["wall", "floor", "ceiling"]
 skip_bg: !!bool False
