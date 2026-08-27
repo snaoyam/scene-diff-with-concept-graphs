@@ -1,0 +1,16 @@
+{"obj_num": 0, "class_name": "remote", "n_frames_visible": 0, "n_frames_recognized": 0, "confidence": null}
+{"obj_num": 1, "class_name": "pillow", "n_frames_visible": 37, "n_frames_recognized": 37, "confidence": 1.0}
+{"obj_num": 2, "class_name": "stool", "n_frames_visible": 6, "n_frames_recognized": 5, "confidence": 0.8333333333333334}
+{"obj_num": 6, "class_name": "tote bag", "n_frames_visible": 25, "n_frames_recognized": 25, "confidence": 1.0}
+{"obj_num": 7, "class_name": "place mat", "n_frames_visible": 6, "n_frames_recognized": 6, "confidence": 1.0}
+{"obj_num": 8, "class_name": "stool", "n_frames_visible": 9, "n_frames_recognized": 6, "confidence": 0.6666666666666666}
+{"obj_num": 9, "class_name": "stool", "n_frames_visible": 4, "n_frames_recognized": 3, "confidence": 0.75}
+{"obj_num": 11, "class_name": "pillow", "n_frames_visible": 23, "n_frames_recognized": 22, "confidence": 0.9565217391304348}
+{"obj_num": 38, "class_name": "pillow", "n_frames_visible": 37, "n_frames_recognized": 36, "confidence": 0.972972972972973}
+{"obj_num": 122, "class_name": "pillow", "n_frames_visible": 24, "n_frames_recognized": 24, "confidence": 1.0}
+{"obj_num": 134, "class_name": "pillow", "n_frames_visible": 33, "n_frames_recognized": 6, "confidence": 0.18181818181818182}
+{"obj_num": 143, "class_name": "armchair", "n_frames_visible": 17, "n_frames_recognized": 1, "confidence": 0.058823529411764705}
+{"obj_num": 179, "class_name": "stool", "n_frames_visible": 2, "n_frames_recognized": 1, "confidence": 0.5}
+{"obj_num": 232, "class_name": "pillow", "n_frames_visible": 6, "n_frames_recognized": 1, "confidence": 0.16666666666666666}
+{"obj_num": 238, "class_name": "pillow", "n_frames_visible": 33, "n_frames_recognized": 3, "confidence": 0.09090909090909091}
+{"obj_num": 249, "class_name": "pillow", "n_frames_visible": 19, "n_frames_recognized": 6, "confidence": 0.3157894736842105}

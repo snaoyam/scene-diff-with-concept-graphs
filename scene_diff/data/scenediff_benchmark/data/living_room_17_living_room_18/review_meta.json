@@ -1,0 +1,50 @@
+{
+  "sessionId": "IMG_4203_IMG_4209_2025-04-28_21-47-08",
+  "reviewerName": "YQ",
+  "reviewerComments": "",
+  "timestamp": "2025-04-29T04:28:07.647Z",
+  "objectReviews": [
+    {
+      "index": 0,
+      "comment": "",
+      "needsReannotation": false,
+      "reviewed": true
+    },
+    {
+      "index": 1,
+      "comment": "",
+      "needsReannotation": false,
+      "reviewed": false
+    },
+    {
+      "index": 2,
+      "comment": "",
+      "needsReannotation": false,
+      "reviewed": false
+    },
+    {
+      "index": 3,
+      "comment": "",
+      "needsReannotation": false,
+      "reviewed": false
+    },
+    {
+      "index": 4,
+      "comment": "",
+      "needsReannotation": false,
+      "reviewed": false
+    },
+    {
+      "index": 5,
+      "comment": "",
+      "needsReannotation": false,
+      "reviewed": false
+    },
+    {
+      "index": 6,
+      "comment": "",
+      "needsReannotation": false,
+      "reviewed": false
+    }
+  ]
+}

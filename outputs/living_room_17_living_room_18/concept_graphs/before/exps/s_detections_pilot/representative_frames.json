@@ -1,0 +1,86 @@
+{
+  "detections_exp_suffix": "s_detections_pilot",
+  "num_total_frames": 37,
+  "representative_frame_indices": [
+    35,
+    19,
+    0,
+    11,
+    20,
+    4,
+    7,
+    17,
+    36
+  ],
+  "representative_color_paths": [
+    "/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/living_room_17_living_room_18/before/color/35.jpg",
+    "/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/living_room_17_living_room_18/before/color/19.jpg",
+    "/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/living_room_17_living_room_18/before/color/0.jpg",
+    "/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/living_room_17_living_room_18/before/color/11.jpg",
+    "/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/living_room_17_living_room_18/before/color/20.jpg",
+    "/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/living_room_17_living_room_18/before/color/4.jpg",
+    "/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/living_room_17_living_room_18/before/color/7.jpg",
+    "/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/living_room_17_living_room_18/before/color/17.jpg",
+    "/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/living_room_17_living_room_18/before/color/36.jpg"
+  ],
+  "coverage": {
+    "voxel_size": 0.1,
+    "pixel_stride": 4,
+    "total_scene_voxels": 156
+  },
+  "discovery_params": {
+    "sam_conf": 0.25,
+    "sam_min_segment_area_px": 400,
+    "sam_max_segment_area_ratio": 0.85,
+    "sam_max_segments_per_frame": 60,
+    "max_representative_frames": null
+  },
+  "per_frame_object_counts": {
+    "35": {
+      "full_frame_objects": 5,
+      "segment_masks_total": 62,
+      "segment_objects_kept": 3
+    },
+    "19": {
+      "full_frame_objects": 2,
+      "segment_masks_total": 88,
+      "segment_objects_kept": 4
+    },
+    "0": {
+      "full_frame_objects": 5,
+      "segment_masks_total": 44,
+      "segment_objects_kept": 10
+    },
+    "11": {
+      "full_frame_objects": 3,
+      "segment_masks_total": 67,
+      "segment_objects_kept": 4
+    },
+    "20": {
+      "full_frame_objects": 2,
+      "segment_masks_total": 91,
+      "segment_objects_kept": 6
+    },
+    "4": {
+      "full_frame_objects": 4,
+      "segment_masks_total": 47,
+      "segment_objects_kept": 6
+    },
+    "7": {
+      "full_frame_objects": 3,
+      "segment_masks_total": 52,
+      "segment_objects_kept": 5
+    },
+    "17": {
+      "full_frame_objects": 1,
+      "segment_masks_total": 67,
+      "segment_objects_kept": 3
+    },
+    "36": {
+      "full_frame_objects": 3,
+      "segment_masks_total": 53,
+      "segment_objects_kept": 2
+    }
+  },
+  "num_discovered_classes": 16
+}

@@ -1,0 +1,17 @@
+Scenes: 1
+Duplicate match threshold: 1
+Per-frame duplicate threshold: 1
+IoU threshold: 0.5
+
+Metric 1: px/im IoU (merged masks, all views): 0.7202
+  TP: 3652942, FP: 981013, FN: 438134
+
+Metric 2: obj/im AP (IoU-based matching): 0.5958
+
+Metric 3a: obj/sc AP (without class requirement): 0.5143
+Metric 3b: obj/sc AP (with class requirement): 0.2571
+
+Detection Statistics:
+  True Positives: 4
+  False Positives: 1
+  False Negatives: 3

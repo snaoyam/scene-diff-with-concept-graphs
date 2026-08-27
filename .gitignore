@@ -1,5 +1,3 @@
-# 대용량 데이터셋 / 체크포인트 — 로컬 전용, git 히스토리에 올리지 않음
-/Datasets/
 /replica-semantic-saved-maps-gt/
 /mapping_process.log
 *.rrd
@@ -12,21 +10,24 @@
 /Grounded-Segment-Anything/*.pth
 /Grounded-Segment-Anything/*.pth.*
 
-
-/concept-graphs/conceptgraph/dataset/dataconfigs/scenediff/
-
 *.pth
 *.pt
 
-.claude*
-/.trash/
-/benchmark_output/*
-/terminal-output/*
-/outputs*/
-/isolated-outputs*/
-/ground-truth*/
 /hydra-logs/
-/.isolated-runs/
-concept-graphs/latest_pcd_save
 
-/outputs/
+/concept-graphs/latest_pcd_save
+
+/Datasets/scenediff/*
+!/Datasets/scenediff/living_room_17_living_room_18
+!/Datasets/scenediff/test_split.json
+!/Datasets/scenediff/val_split.json
+/outputs/*
+!/outputs/living_room_17_living_room_18
+
+/ground-truth/*
+!/ground-truth/living_room_17_living_room_18
+
+/concept-graphs/conceptgraph/dataset/dataconfigs/scenediff/*
+!/concept-graphs/conceptgraph/dataset/dataconfigs/scenediff/living_room_17_living_room_18
+
+/outputs-history/

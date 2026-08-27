@@ -1,0 +1,752 @@
+{
+  "edge_0": {
+    "edge_id": 0,
+    "edge_description": "remote on top of place mat",
+    "num_detections": 4,
+    "object_1_id": 0,
+    "object_1_tag": "remote",
+    "object_2_id": 7,
+    "object_2_tag": "place mat",
+    "relationship": "on top of",
+    "center_distance": 0.07735556113343864,
+    "center_diff": [
+      -0.05244930943979334,
+      -0.02213795648039621,
+      0.05237235588008289
+    ],
+    "surface_min_distance": 0.026567411246355727,
+    "surface_diff": [
+      -0.01868979285056724,
+      -0.010976648326102845,
+      0.015363338669082908
+    ],
+    "iou": 0.005236956843118988,
+    "giou": -0.3197202393513571,
+    "iom": 0.04325321985960869
+  },
+  "edge_1": {
+    "edge_id": 1,
+    "edge_description": "remote on top of stool",
+    "num_detections": 3,
+    "object_1_id": 0,
+    "object_1_tag": "remote",
+    "object_2_id": 8,
+    "object_2_tag": "stool",
+    "relationship": "on top of",
+    "center_distance": 0.07235469945349202,
+    "center_diff": [
+      -0.05919964649970186,
+      -0.03506134182423368,
+      0.022389879338659633
+    ],
+    "surface_min_distance": 0.006142858864059836,
+    "surface_diff": [
+      0.0051372098751948925,
+      -0.0015459713296041289,
+      -0.002992283805056034
+    ],
+    "iou": 0.03653664146615476,
+    "giou": 0.03653664146615476,
+    "iom": 1.0
+  },
+  "edge_2": {
+    "edge_id": 2,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 36,
+    "object_1_id": 38,
+    "object_1_tag": "pillow",
+    "object_2_id": 1,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.15786618050908774,
+    "center_diff": [
+      -0.009089412210041475,
+      -0.032215987681373376,
+      0.15427651691659824
+    ],
+    "surface_min_distance": 0.01812536895813619,
+    "surface_diff": [
+      0.011363230766567922,
+      0.0030914208174524505,
+      -0.013778574082382866
+    ],
+    "iou": 0.04155685454031606,
+    "giou": 0.04155685454031606,
+    "iom": 1.0
+  },
+  "edge_3": {
+    "edge_id": 3,
+    "edge_description": "pillow next to pillow",
+    "num_detections": 27,
+    "object_1_id": 1,
+    "object_1_tag": "pillow",
+    "object_2_id": 122,
+    "object_2_tag": "pillow",
+    "relationship": "next to",
+    "center_distance": 0.18259490812210755,
+    "center_diff": [
+      0.14755572723452717,
+      -0.07417192977628825,
+      0.07788923331033679
+    ],
+    "surface_min_distance": 0.060430888324152214,
+    "surface_diff": [
+      0.02428692772935953,
+      -0.03688892002334104,
+      0.04124615114924751
+    ],
+    "iou": 0.0,
+    "giou": -0.41125119645882907,
+    "iom": 0.0
+  },
+  "edge_4": {
+    "edge_id": 4,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 6,
+    "object_1_id": 1,
+    "object_1_tag": "pillow",
+    "object_2_id": 134,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.07556943004853915,
+    "center_diff": [
+      0.03350161881563546,
+      -0.04679555990946835,
+      0.04897505352066775
+    ],
+    "surface_min_distance": 0.006750651971496878,
+    "surface_diff": [
+      -0.0043342392937208984,
+      0.0013952082995815074,
+      0.004983880574995686
+    ],
+    "iou": 0.038947013006131834,
+    "giou": 0.038947013006131834,
+    "iom": 1.0
+  },
+  "edge_5": {
+    "edge_id": 5,
+    "edge_description": "pillow on top of armchair",
+    "num_detections": 1,
+    "object_1_id": 1,
+    "object_1_tag": "pillow",
+    "object_2_id": 143,
+    "object_2_tag": "armchair",
+    "relationship": "on top of",
+    "center_distance": 0.15760624223639286,
+    "center_diff": [
+      0.06353685415213481,
+      -0.048312592935910253,
+      0.13589955526099387
+    ],
+    "surface_min_distance": 0.011652851294883741,
+    "surface_diff": [
+      -0.0013683516211448754,
+      0.0003473363499676696,
+      0.011567018397217799
+    ],
+    "iou": 0.023420340567275762,
+    "giou": -0.298867669856711,
+    "iom": 0.057708284663472775
+  },
+  "edge_6": {
+    "edge_id": 6,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 3,
+    "object_1_id": 1,
+    "object_1_tag": "pillow",
+    "object_2_id": 238,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.09979082389789797,
+    "center_diff": [
+      0.004639206233449544,
+      -0.03529411790872458,
+      0.09322559488032164
+    ],
+    "surface_min_distance": 0.005536364523494437,
+    "surface_diff": [
+      -0.0025151874948673436,
+      -0.0024053515206942655,
+      0.004305745935905242
+    ],
+    "iou": 0.09965186916184043,
+    "giou": 0.0530066176094164,
+    "iom": 0.2438443432842093
+  },
+  "edge_7": {
+    "edge_id": 7,
+    "edge_description": "stool on top of stool",
+    "num_detections": 3,
+    "object_1_id": 9,
+    "object_1_tag": "stool",
+    "object_2_id": 2,
+    "object_2_tag": "stool",
+    "relationship": "on top of",
+    "center_distance": 0.16416129327085358,
+    "center_diff": [
+      -0.020168711411439097,
+      -0.12835158539763514,
+      0.10033954262540196
+    ],
+    "surface_min_distance": 0.038474260591484226,
+    "surface_diff": [
+      -0.002830737374243192,
+      -0.03701260761133324,
+      0.010115460038425117
+    ],
+    "iou": 0.027266465419789224,
+    "giou": -0.127223956904795,
+    "iom": 0.060299799421374825
+  },
+  "edge_8": {
+    "edge_id": 8,
+    "edge_description": "pillow on top of stool",
+    "num_detections": 5,
+    "object_1_id": 38,
+    "object_1_tag": "pillow",
+    "object_2_id": 2,
+    "object_2_tag": "stool",
+    "relationship": "on top of",
+    "center_distance": 0.32726118392542347,
+    "center_diff": [
+      0.2057250472355336,
+      -0.03208219306114474,
+      -0.2524833070375045
+    ],
+    "surface_min_distance": 0.06711341359005478,
+    "surface_diff": [
+      0.05386014911922288,
+      -0.0006899309795317388,
+      -0.04003521719446901
+    ],
+    "iou": 0.02805961039888661,
+    "giou": 0.02805961039888661,
+    "iom": 1.0
+  },
+  "edge_9": {
+    "edge_id": 9,
+    "edge_description": "pillow next to tote bag",
+    "num_detections": 22,
+    "object_1_id": 11,
+    "object_1_tag": "pillow",
+    "object_2_id": 6,
+    "object_2_tag": "tote bag",
+    "relationship": "next to",
+    "center_distance": 0.134486843098936,
+    "center_diff": [
+      -0.07506569163674093,
+      -0.07567056226542261,
+      0.08201109017840424
+    ],
+    "surface_min_distance": 0.012017043405589374,
+    "surface_diff": [
+      0.007685810416442673,
+      0.00033436137551867695,
+      0.00923178492626868
+    ],
+    "iou": 0.0,
+    "giou": -0.42101565854998957,
+    "iom": 0.0
+  },
+  "edge_10": {
+    "edge_id": 10,
+    "edge_description": "tote bag on top of pillow",
+    "num_detections": 24,
+    "object_1_id": 6,
+    "object_1_tag": "tote bag",
+    "object_2_id": 38,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.22535006639930744,
+    "center_diff": [
+      0.17148993223569284,
+      -0.060257919394555326,
+      0.13320224742176473
+    ],
+    "surface_min_distance": 0.022236862365304363,
+    "surface_diff": [
+      0.019369198475963523,
+      -0.010697474299066728,
+      -0.002208221427535892
+    ],
+    "iou": 0.01748845346831687,
+    "giou": 0.01748845346831687,
+    "iom": 1.0
+  },
+  "edge_11": {
+    "edge_id": 11,
+    "edge_description": "place mat on top of stool",
+    "num_detections": 5,
+    "object_1_id": 7,
+    "object_1_tag": "place mat",
+    "object_2_id": 8,
+    "object_2_tag": "stool",
+    "relationship": "on top of",
+    "center_distance": 0.03333961365590015,
+    "center_diff": [
+      -0.006750337059908518,
+      -0.012923385343837468,
+      -0.02998247654142326
+    ],
+    "surface_min_distance": 0.00413574610682926,
+    "surface_diff": [
+      -0.003176203930723695,
+      0.0017616608604667239,
+      -0.001978048397615279
+    ],
+    "iou": 0.26680813302334433,
+    "giou": 0.26680813302334433,
+    "iom": 1.0
+  },
+  "edge_12": {
+    "edge_id": 12,
+    "edge_description": "pillow on top of place mat",
+    "num_detections": 5,
+    "object_1_id": 38,
+    "object_1_tag": "pillow",
+    "object_2_id": 7,
+    "object_2_tag": "place mat",
+    "relationship": "on top of",
+    "center_distance": 0.2941757063993728,
+    "center_diff": [
+      0.2893543247746099,
+      -0.05040189245414495,
+      -0.016524836060923486
+    ],
+    "surface_min_distance": 0.16099407005074975,
+    "surface_diff": [
+      0.14544536122898732,
+      0.06721344002802987,
+      -0.015719127459039806
+    ],
+    "iou": 0.0019556143743208096,
+    "giou": -0.11686058806546945,
+    "iom": 0.09446744472292179
+  },
+  "edge_13": {
+    "edge_id": 13,
+    "edge_description": "pillow on top of stool",
+    "num_detections": 5,
+    "object_1_id": 38,
+    "object_1_tag": "pillow",
+    "object_2_id": 8,
+    "object_2_tag": "stool",
+    "relationship": "on top of",
+    "center_distance": 0.2933224076096729,
+    "center_diff": [
+      0.2826039877147013,
+      -0.06332527779798242,
+      -0.04650731260234675
+    ],
+    "surface_min_distance": 0.1276741785424513,
+    "surface_diff": [
+      0.10277790622125049,
+      0.0007491624589893164,
+      -0.07574190791679075
+    ],
+    "iou": 0.0252130153121432,
+    "giou": -0.11874999410897974,
+    "iom": 0.3356142974720357
+  },
+  "edge_14": {
+    "edge_id": 14,
+    "edge_description": "stool on top of pillow",
+    "num_detections": 3,
+    "object_1_id": 9,
+    "object_1_tag": "stool",
+    "object_2_id": 38,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.4298601509104418,
+    "center_diff": [
+      -0.2258937586469727,
+      -0.09626939233649039,
+      0.35282284966290645
+    ],
+    "surface_min_distance": 0.051372810354997855,
+    "surface_diff": [
+      -0.047239064093347466,
+      0.007548471289838626,
+      0.01872583906108527
+    ],
+    "iou": 0.011496935548128097,
+    "giou": -0.09885372999425501,
+    "iom": 0.3298718029659718
+  },
+  "edge_15": {
+    "edge_id": 15,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 21,
+    "object_1_id": 11,
+    "object_1_tag": "pillow",
+    "object_2_id": 38,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.2721965594611288,
+    "center_diff": [
+      0.09642424059895191,
+      -0.13592848165997795,
+      0.21521333760016897
+    ],
+    "surface_min_distance": 0.010427749813788327,
+    "surface_diff": [
+      0.006510299877925396,
+      -0.006236139198645824,
+      0.0052406611771378675
+    ],
+    "iou": 0.03062305697077186,
+    "giou": 0.03062305697077186,
+    "iom": 1.0
+  },
+  "edge_16": {
+    "edge_id": 16,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 6,
+    "object_1_id": 249,
+    "object_1_tag": "pillow",
+    "object_2_id": 11,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.15241637776966097,
+    "center_diff": [
+      -0.11528896953134632,
+      -0.03242299722711885,
+      0.09427595116271459
+    ],
+    "surface_min_distance": 0.009053081346670714,
+    "surface_diff": [
+      -0.008761617625456464,
+      0.001177016144427237,
+      0.0019511461889067938
+    ],
+    "iou": 0.0047447375034713355,
+    "giou": -0.4398754289727856,
+    "iom": 0.011868597594577883
+  },
+  "edge_17": {
+    "edge_id": 17,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 26,
+    "object_1_id": 38,
+    "object_1_tag": "pillow",
+    "object_2_id": 122,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.29050343363869885,
+    "center_diff": [
+      0.1384663150244857,
+      -0.10638791745766163,
+      0.23216575022693503
+    ],
+    "surface_min_distance": 0.018329584123769768,
+    "surface_diff": [
+      0.0019573764477454347,
+      0.0016571298549885594,
+      0.018149276906694378
+    ],
+    "iou": 0.059088353593323324,
+    "giou": 0.059088353593323165,
+    "iom": 1.0
+  },
+  "edge_18": {
+    "edge_id": 18,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 6,
+    "object_1_id": 38,
+    "object_1_tag": "pillow",
+    "object_2_id": 134,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.21943104012256096,
+    "center_diff": [
+      0.024412206605593983,
+      -0.07901154759084172,
+      0.203251570437266
+    ],
+    "surface_min_distance": 0.0637633178022096,
+    "surface_diff": [
+      0.008047941538271264,
+      0.022327321577575,
+      0.059181771224877194
+    ],
+    "iou": 0.0016185153542756184,
+    "giou": 0.0016185153542756184,
+    "iom": 1.0
+  },
+  "edge_19": {
+    "edge_id": 19,
+    "edge_description": "pillow on top of armchair",
+    "num_detections": 1,
+    "object_1_id": 38,
+    "object_1_tag": "pillow",
+    "object_2_id": 143,
+    "object_2_tag": "armchair",
+    "relationship": "on top of",
+    "center_distance": 0.30602537328575735,
+    "center_diff": [
+      0.05444744194209333,
+      -0.08052858061728363,
+      0.2901760721775921
+    ],
+    "surface_min_distance": 0.02585752725045266,
+    "surface_diff": [
+      0.025421594605032682,
+      0.0007008313096764085,
+      -0.00467579712141708
+    ],
+    "iou": 0.054346287398404504,
+    "giou": 0.03384755578635059,
+    "iom": 0.8666351551614456
+  },
+  "edge_20": {
+    "edge_id": 20,
+    "edge_description": "pillow next to stool",
+    "num_detections": 1,
+    "object_1_id": 38,
+    "object_1_tag": "pillow",
+    "object_2_id": 179,
+    "object_2_tag": "stool",
+    "relationship": "next to",
+    "center_distance": 0.5538324841486406,
+    "center_diff": [
+      0.34537915960503585,
+      -0.27301537811755094,
+      0.33601526739138515
+    ],
+    "surface_min_distance": 0.17546969835557094,
+    "surface_diff": [
+      0.14876127024235802,
+      -0.09129982413595783,
+      0.018001156341145186
+    ],
+    "iou": 0.0,
+    "giou": -0.19302380012770082,
+    "iom": 0.0
+  },
+  "edge_21": {
+    "edge_id": 21,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 1,
+    "object_1_id": 232,
+    "object_1_tag": "pillow",
+    "object_2_id": 38,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.4110550264692256,
+    "center_diff": [
+      0.33659487364637886,
+      -0.16057186263812806,
+      0.17287799961104394
+    ],
+    "surface_min_distance": 0.0892877910495779,
+    "surface_diff": [
+      0.066185920673692,
+      -0.059917088507193045,
+      -0.0012946196005123034
+    ],
+    "iou": 0.0020277429342382487,
+    "giou": -0.2511502894130433,
+    "iom": 0.09595256767732872
+  },
+  "edge_22": {
+    "edge_id": 22,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 3,
+    "object_1_id": 38,
+    "object_1_tag": "pillow",
+    "object_2_id": 238,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.256582762542528,
+    "center_diff": [
+      -0.004450205976591931,
+      -0.06751010559009796,
+      0.2475021117969199
+    ],
+    "surface_min_distance": 0.01334037271685174,
+    "surface_diff": [
+      0.005951250735958563,
+      -0.006352858866784689,
+      0.010108874473500506
+    ],
+    "iou": 0.02457812698196411,
+    "giou": 0.02457812698196411,
+    "iom": 1.0
+  },
+  "edge_23": {
+    "edge_id": 23,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 6,
+    "object_1_id": 249,
+    "object_1_tag": "pillow",
+    "object_2_id": 38,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.3528196682444459,
+    "center_diff": [
+      -0.01886472893239441,
+      -0.16835147888709678,
+      0.30948928876288356
+    ],
+    "surface_min_distance": 0.0037377684000145218,
+    "surface_diff": [
+      0.0018284710232254475,
+      -0.001610615412535859,
+      -0.0028343472480050758
+    ],
+    "iou": 0.03817046926042154,
+    "giou": 0.019129576839222433,
+    "iom": 0.8301585463661987
+  },
+  "edge_24": {
+    "edge_id": 24,
+    "edge_description": "pillow next to pillow",
+    "num_detections": 5,
+    "object_1_id": 134,
+    "object_1_tag": "pillow",
+    "object_2_id": 122,
+    "object_2_tag": "pillow",
+    "relationship": "next to",
+    "center_distance": 0.12080494636902306,
+    "center_diff": [
+      0.11405410841889171,
+      -0.027376369866819905,
+      0.028914179789669037
+    ],
+    "surface_min_distance": 0.040605858369731934,
+    "surface_diff": [
+      0.026234120717411935,
+      -0.021844153736482685,
+      0.021987259757957484
+    ],
+    "iou": 0.0,
+    "giou": -0.22394189264801395,
+    "iom": 0.0
+  },
+  "edge_25": {
+    "edge_id": 25,
+    "edge_description": "armchair on top of pillow",
+    "num_detections": 1,
+    "object_1_id": 143,
+    "object_1_tag": "armchair",
+    "object_2_id": 122,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.10532366205501105,
+    "center_diff": [
+      0.08401887308239236,
+      -0.025859336840378,
+      -0.058010321950657084
+    ],
+    "surface_min_distance": 0.007035147595061699,
+    "surface_diff": [
+      0.006503969636894799,
+      0.002680598012311519,
+      -7.794192096988173e-05
+    ],
+    "iou": 0.1481884334838539,
+    "giou": -0.05860601691072678,
+    "iom": 0.26719033693336636
+  },
+  "edge_26": {
+    "edge_id": 26,
+    "edge_description": "pillow next to pillow",
+    "num_detections": 1,
+    "object_1_id": 238,
+    "object_1_tag": "pillow",
+    "object_2_id": 122,
+    "object_2_tag": "pillow",
+    "relationship": "next to",
+    "center_distance": 0.1489020490687299,
+    "center_diff": [
+      0.14291652100107763,
+      -0.03887781186756367,
+      -0.015336361569984858
+    ],
+    "surface_min_distance": 0.019320784974040852,
+    "surface_diff": [
+      0.018277607436633453,
+      0.0036587609451513847,
+      0.005082840421622464
+    ],
+    "iou": 0.0,
+    "giou": -0.22163255816632413,
+    "iom": 0.0
+  },
+  "edge_27": {
+    "edge_id": 27,
+    "edge_description": "pillow on top of armchair",
+    "num_detections": 1,
+    "object_1_id": 134,
+    "object_1_tag": "pillow",
+    "object_2_id": 143,
+    "object_2_tag": "armchair",
+    "relationship": "on top of",
+    "center_distance": 0.09197981166389814,
+    "center_diff": [
+      0.03003523533649935,
+      -0.0015170330264419052,
+      0.08692450174032612
+    ],
+    "surface_min_distance": 0.006627103735548388,
+    "surface_diff": [
+      0.0025728959362927017,
+      0.0006184282264830032,
+      0.006075874994716152
+    ],
+    "iou": 0.005475231951208097,
+    "giou": -0.1332434829605005,
+    "iom": 0.21820801556733926
+  },
+  "edge_28": {
+    "edge_id": 28,
+    "edge_description": "pillow on top of pillow",
+    "num_detections": 1,
+    "object_1_id": 238,
+    "object_1_tag": "pillow",
+    "object_2_id": 134,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.05406877508121704,
+    "center_diff": [
+      0.028862412582185915,
+      -0.011501442000743767,
+      -0.044250541359653894
+    ],
+    "surface_min_distance": 0.004119606107769031,
+    "surface_diff": [
+      0.0038765632619392754,
+      -0.0006391378058336616,
+      -0.001238916714111471
+    ],
+    "iou": 0.02656978928639881,
+    "giou": -0.1457211170885115,
+    "iom": 0.418917437023789
+  },
+  "edge_29": {
+    "edge_id": 29,
+    "edge_description": "pillow on top of armchair",
+    "num_detections": 0,
+    "object_1_id": 238,
+    "object_1_tag": "pillow",
+    "object_2_id": 143,
+    "object_2_tag": "armchair",
+    "relationship": "on top of",
+    "center_distance": 0.07388829756435081,
+    "center_diff": [
+      0.058897647918685264,
+      -0.013018475027185672,
+      0.04267396038067223
+    ],
+    "surface_min_distance": 0.0029486820801618986,
+    "surface_diff": [
+      0.0025233227738815367,
+      -0.00013683979489756415,
+      -0.0015194877621129699
+    ],
+    "iou": 0.19153069539575748,
+    "giou": 0.06960529201604779,
+    "iom": 0.5743289259577764
+  }
+}

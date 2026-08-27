@@ -1,0 +1,324 @@
+{
+  "object_1": {
+    "id": 2,
+    "object_tag": "pillow",
+    "object_caption": "A small, gray, patterned decorative pillow with a textured finish, resting on the right armrest of the couch.",
+    "bbox_extent": [
+      0.12,
+      0.13,
+      0.05
+    ],
+    "bbox_center": [
+      0.04,
+      0.31,
+      -0.26
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 1.0,
+    "recognition_n_visible": 14,
+    "recognition_n_recognized": 14,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.04551782102802511,
+    "extent_ratio": 0.11118449622424278,
+    "is_large": false
+  },
+  "object_2": {
+    "id": 35,
+    "object_tag": "pillow",
+    "object_caption": "A square patterned pillow with a black and white geometric design, resting on a couch.",
+    "bbox_extent": [
+      0.14,
+      0.15,
+      0.03
+    ],
+    "bbox_center": [
+      0.17,
+      0.06,
+      0.22
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 1.0,
+    "recognition_n_visible": 30,
+    "recognition_n_recognized": 30,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.06717358758175085,
+    "extent_ratio": 0.09961974783363554,
+    "is_large": false
+  },
+  "object_3": {
+    "id": 49,
+    "object_tag": "cup",
+    "object_caption": "A small cup resting on the couch arm.",
+    "bbox_extent": [
+      0.07,
+      0.02,
+      0.01
+    ],
+    "bbox_center": [
+      0.68,
+      0.01,
+      0.35
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": null,
+    "recognition_n_visible": 0,
+    "recognition_n_recognized": 0,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.0007222966406639876,
+    "extent_ratio": 0.035134682837394716,
+    "is_large": false
+  },
+  "object_4": {
+    "id": 55,
+    "object_tag": "couch",
+    "object_caption": "A beige sectional couch with multiple cushions, featuring a rectangular back cushion and a cushioned armrest, with a small beige stool positioned nearby.",
+    "bbox_extent": [
+      0.96,
+      0.64,
+      0.26
+    ],
+    "bbox_center": [
+      0.19,
+      0.21,
+      -0.01
+    ],
+    "bbox_volume": 0.16,
+    "recognition_confidence": 1.0,
+    "recognition_n_visible": 37,
+    "recognition_n_recognized": 37,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.4338724292805925,
+    "extent_ratio": 0.5473056896360085,
+    "is_large": true
+  },
+  "object_5": {
+    "id": 67,
+    "object_tag": "backpack",
+    "object_caption": "A black backpack with visible straps and zipper, resting on or near the couch.",
+    "bbox_extent": [
+      0.24,
+      0.16,
+      0.1
+    ],
+    "bbox_center": [
+      0.44,
+      -0.0,
+      0.51
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.4,
+    "recognition_n_visible": 20,
+    "recognition_n_recognized": 8,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.014752580568907096,
+    "extent_ratio": 0.1205797802279864,
+    "is_large": false
+  },
+  "object_6": {
+    "id": 111,
+    "object_tag": "stool",
+    "object_caption": "A small beige upholstered stool with a cushioned, rounded seat and smooth surface.",
+    "bbox_extent": [
+      0.22,
+      0.17,
+      0.1
+    ],
+    "bbox_center": [
+      -0.09,
+      0.1,
+      0.39
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.8125,
+    "recognition_n_visible": 16,
+    "recognition_n_recognized": 13,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.17562577154413891,
+    "extent_ratio": 0.13891477814527944,
+    "is_large": false
+  },
+  "object_7": {
+    "id": 112,
+    "object_tag": "place mat",
+    "object_caption": "A light-colored rectangular mat placed on a wooden floor near the couch.",
+    "bbox_extent": [
+      0.17,
+      0.1,
+      0.02
+    ],
+    "bbox_center": [
+      -0.13,
+      0.23,
+      0.0
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.8333333333333334,
+    "recognition_n_visible": 18,
+    "recognition_n_recognized": 15,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.0293974732750243,
+    "extent_ratio": 0.11902161826000733,
+    "is_large": false
+  },
+  "object_8": {
+    "id": 113,
+    "object_tag": "remote",
+    "object_caption": "A small beige upholstered stool with a rounded back and cushioned seat, alongside a black remote control on the couch and a book lying on the couch near the right armrest.",
+    "bbox_extent": [
+      0.24,
+      0.18,
+      0.1
+    ],
+    "bbox_center": [
+      -0.13,
+      0.23,
+      0.03
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 1.0,
+    "recognition_n_visible": 24,
+    "recognition_n_recognized": 24,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.026445906547947366,
+    "extent_ratio": 0.15007920687048731,
+    "is_large": false
+  },
+  "object_9": {
+    "id": 144,
+    "object_tag": "tissue box",
+    "object_caption": "A rectangular tissue box with a red and white design, placed on a wooden surface.",
+    "bbox_extent": [
+      0.04,
+      0.04,
+      0.03
+    ],
+    "bbox_center": [
+      -0.19,
+      0.18,
+      0.09
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 1.0,
+    "recognition_n_visible": 6,
+    "recognition_n_recognized": 6,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.019563076195729254,
+    "extent_ratio": 0.03457727729213536,
+    "is_large": false
+  },
+  "object_10": {
+    "id": 193,
+    "object_tag": "stool",
+    "object_caption": "A gray upholstered stool with a cushioned seat.",
+    "bbox_extent": [
+      0.15,
+      0.05,
+      0.01
+    ],
+    "bbox_center": [
+      0.16,
+      0.07,
+      0.53
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.3333333333333333,
+    "recognition_n_visible": 3,
+    "recognition_n_recognized": 1,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.0067107924250781395,
+    "extent_ratio": 0.08133984207350313,
+    "is_large": false
+  },
+  "object_11": {
+    "id": 245,
+    "object_tag": "pillow",
+    "object_caption": "A gray rectangular cushion with a light gray pattern, placed on the backrest of an armchair.",
+    "bbox_extent": [
+      0.32,
+      0.11,
+      0.03
+    ],
+    "bbox_center": [
+      0.47,
+      0.01,
+      0.2
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.2727272727272727,
+    "recognition_n_visible": 11,
+    "recognition_n_recognized": 3,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.007351666535340005,
+    "extent_ratio": 0.19916041630823478,
+    "is_large": false
+  },
+  "object_12": {
+    "id": 246,
+    "object_tag": "place mat",
+    "object_caption": "A rectangular place mat with a light-colored design.",
+    "bbox_extent": [
+      0.07,
+      0.02,
+      0.01
+    ],
+    "bbox_center": [
+      -0.1,
+      0.23,
+      0.02
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.1111111111111111,
+    "recognition_n_visible": 9,
+    "recognition_n_recognized": 1,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.007216400073542931,
+    "extent_ratio": 0.0425264125051576,
+    "is_large": false
+  },
+  "object_13": {
+    "id": 263,
+    "object_tag": "cup",
+    "object_caption": "A small cup placed on a surface near the couch.",
+    "bbox_extent": [
+      0.03,
+      0.01,
+      0.0
+    ],
+    "bbox_center": [
+      0.7,
+      0.0,
+      0.38
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": null,
+    "recognition_n_visible": 0,
+    "recognition_n_recognized": 0,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.000748561973051769,
+    "extent_ratio": 0.02025736560244949,
+    "is_large": false
+  },
+  "object_14": {
+    "id": 270,
+    "object_tag": "box",
+    "object_caption": "A small orange box placed on the armrest.",
+    "bbox_extent": [
+      0.13,
+      0.06,
+      0.02
+    ],
+    "bbox_center": [
+      0.59,
+      -0.01,
+      0.17
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.3333333333333333,
+    "recognition_n_visible": 3,
+    "recognition_n_recognized": 1,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.01209518556457332,
+    "extent_ratio": 0.07433199399333527,
+    "is_large": false
+  }
+}

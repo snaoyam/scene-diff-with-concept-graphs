@@ -1,0 +1,452 @@
+{
+  "edge_0": {
+    "edge_id": 0,
+    "edge_description": "couch on top of pillow",
+    "num_detections": 14,
+    "object_1_id": 55,
+    "object_1_tag": "couch",
+    "object_2_id": 2,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.3042707380499581,
+    "center_diff": [
+      0.13155144667164242,
+      -0.10810414976538638,
+      0.2521673882871596
+    ],
+    "surface_min_distance": 0.01734482359832162,
+    "surface_diff": [
+      -0.0006382326955272528,
+      0.01435315236189083,
+      -0.009717128277408005
+    ],
+    "iou": 0.054451377182025355,
+    "giou": 0.054451377182025355,
+    "iom": 1.0
+  },
+  "edge_1": {
+    "edge_id": 1,
+    "edge_description": "pillow on top of couch",
+    "num_detections": 31,
+    "object_1_id": 35,
+    "object_1_tag": "pillow",
+    "object_2_id": 55,
+    "object_2_tag": "couch",
+    "relationship": "on top of",
+    "center_distance": 0.2672156172440158,
+    "center_diff": [
+      -0.009889745012458123,
+      -0.12840067484997086,
+      0.23413595567695492
+    ],
+    "surface_min_distance": 0.0178919088519343,
+    "surface_diff": [
+      0.016019182040864166,
+      -0.0021998452489397635,
+      -0.0076594314402765595
+    ],
+    "iou": 0.030385483084744227,
+    "giou": 0.030385483084744227,
+    "iom": 1.0
+  },
+  "edge_2": {
+    "edge_id": 2,
+    "edge_description": "pillow next to pillow",
+    "num_detections": 3,
+    "object_1_id": 245,
+    "object_1_tag": "pillow",
+    "object_2_id": 35,
+    "object_2_tag": "pillow",
+    "relationship": "next to",
+    "center_distance": 0.32444185963811983,
+    "center_diff": [
+      0.3199898201281878,
+      -0.0450186505102745,
+      -0.029023376888385022
+    ],
+    "surface_min_distance": 0.1021821866369319,
+    "surface_diff": [
+      0.0976490984488356,
+      -0.0201405908573195,
+      -0.022365362459670912
+    ],
+    "iou": 0.0,
+    "giou": -0.39674765963161496,
+    "iom": 0.0
+  },
+  "edge_3": {
+    "edge_id": 3,
+    "edge_description": "cup next to cup",
+    "num_detections": 0,
+    "object_1_id": 263,
+    "object_1_tag": "cup",
+    "object_2_id": 49,
+    "object_2_tag": "cup",
+    "relationship": "next to",
+    "center_distance": 0.030235363505674216,
+    "center_diff": [
+      0.008820321884174476,
+      -0.013219808750948452,
+      0.025721893102339022
+    ],
+    "surface_min_distance": 0.014574552743754493,
+    "surface_diff": [
+      -0.006781189931971743,
+      -0.003540954142691937,
+      0.01240543004278205
+    ],
+    "iou": 0.0,
+    "giou": -0.35580928926345956,
+    "iom": 0.0
+  },
+  "edge_4": {
+    "edge_id": 4,
+    "edge_description": "backpack next to couch",
+    "num_detections": 8,
+    "object_1_id": 67,
+    "object_1_tag": "backpack",
+    "object_2_id": 55,
+    "object_2_tag": "couch",
+    "relationship": "next to",
+    "center_distance": 0.6455471459919786,
+    "center_diff": [
+      0.2694752616900534,
+      -0.20041112858298335,
+      0.5513162255689208
+    ],
+    "surface_min_distance": 0.24856835030368976,
+    "surface_diff": [
+      0.044477946754677755,
+      -0.048168761226583715,
+      0.23976594309259655
+    ],
+    "iou": 0.0,
+    "giou": -0.33435559375904994,
+    "iom": 0.0
+  },
+  "edge_5": {
+    "edge_id": 5,
+    "edge_description": "stool on top of couch",
+    "num_detections": 13,
+    "object_1_id": 111,
+    "object_1_tag": "stool",
+    "object_2_id": 55,
+    "object_2_tag": "couch",
+    "relationship": "on top of",
+    "center_distance": 0.45633153025353024,
+    "center_diff": [
+      -0.25391975156466395,
+      -0.08239763516478682,
+      0.37009979058102505
+    ],
+    "surface_min_distance": 0.04268746965071035,
+    "surface_diff": [
+      -0.03459173631267137,
+      -0.012484929784712134,
+      0.021673909945502168
+    ],
+    "iou": 0.01646524679375166,
+    "giou": -0.1883899987198066,
+    "iom": 0.2112252463205013
+  },
+  "edge_6": {
+    "edge_id": 6,
+    "edge_description": "couch on top of place mat",
+    "num_detections": 16,
+    "object_1_id": 55,
+    "object_1_tag": "couch",
+    "object_2_id": 112,
+    "object_2_tag": "place mat",
+    "relationship": "on top of",
+    "center_distance": 0.3016636935433383,
+    "center_diff": [
+      0.2980607357173461,
+      -0.04633646824810925,
+      -0.0037031791929948155
+    ],
+    "surface_min_distance": 0.13305052735302383,
+    "surface_diff": [
+      0.08762764179471295,
+      0.06723677072319961,
+      -0.07418258478329741
+    ],
+    "iou": 0.008052997548384094,
+    "giou": -0.16438765496213395,
+    "iom": 0.2013866591782548
+  },
+  "edge_7": {
+    "edge_id": 7,
+    "edge_description": "couch on top of remote",
+    "num_detections": 26,
+    "object_1_id": 55,
+    "object_1_tag": "couch",
+    "object_2_id": 113,
+    "object_2_tag": "remote",
+    "relationship": "on top of",
+    "center_distance": 0.28888699663172396,
+    "center_diff": [
+      0.2839886716909431,
+      -0.04906510184152649,
+      -0.019968649313162376
+    ],
+    "surface_min_distance": 0.07212259358960886,
+    "surface_diff": [
+      0.051172712362949804,
+      0.04577234395365154,
+      -0.02208878775531406
+    ],
+    "iou": 0.029446883445724756,
+    "giou": -0.11302187876909416,
+    "iom": 0.31932208903130993
+  },
+  "edge_8": {
+    "edge_id": 8,
+    "edge_description": "stool next to couch",
+    "num_detections": 1,
+    "object_1_id": 193,
+    "object_1_tag": "stool",
+    "object_2_id": 55,
+    "object_2_tag": "couch",
+    "relationship": "next to",
+    "center_distance": 0.5576734504269442,
+    "center_diff": [
+      -0.022754527993633977,
+      -0.12830296323650195,
+      0.5422363491980348
+    ],
+    "surface_min_distance": 0.17906122341694705,
+    "surface_diff": [
+      -0.0068678914233188115,
+      -0.02290051908450913,
+      0.17745793874783783
+    ],
+    "iou": 0.0,
+    "giou": -0.2269264465275747,
+    "iom": 0.0
+  },
+  "edge_9": {
+    "edge_id": 9,
+    "edge_description": "pillow on top of couch",
+    "num_detections": 3,
+    "object_1_id": 245,
+    "object_1_tag": "pillow",
+    "object_2_id": 55,
+    "object_2_tag": "couch",
+    "relationship": "on top of",
+    "center_distance": 0.4102529572988854,
+    "center_diff": [
+      0.3101000751157296,
+      -0.17341932536024535,
+      0.2051125787885699
+    ],
+    "surface_min_distance": 0.08313754287924452,
+    "surface_diff": [
+      0.030614630178044167,
+      -0.05122521386021914,
+      0.057884133577644756
+    ],
+    "iou": 0.019866761105331605,
+    "giou": -0.21378717840954653,
+    "iom": 0.27550560554927683
+  },
+  "edge_10": {
+    "edge_id": 10,
+    "edge_description": "couch on top of place mat",
+    "num_detections": 1,
+    "object_1_id": 55,
+    "object_1_tag": "couch",
+    "object_2_id": 246,
+    "object_2_tag": "place mat",
+    "relationship": "on top of",
+    "center_distance": 0.2789374146876058,
+    "center_diff": [
+      0.27546965268940093,
+      -0.03486247776280063,
+      -0.02659246893435122
+    ],
+    "surface_min_distance": 0.17765094390453404,
+    "surface_diff": [
+      0.16705240413207265,
+      0.05130036881581457,
+      -0.03196285818302205
+    ],
+    "iou": 0.00030779848057836364,
+    "giou": -0.0896263611536378,
+    "iom": 0.06882178968951318
+  },
+  "edge_11": {
+    "edge_id": 11,
+    "edge_description": "box next to couch",
+    "num_detections": 1,
+    "object_1_id": 270,
+    "object_1_tag": "box",
+    "object_2_id": 55,
+    "object_2_tag": "couch",
+    "relationship": "next to",
+    "center_distance": 0.4977193931489383,
+    "center_diff": [
+      0.4134051153392878,
+      -0.21327568934318605,
+      0.17701492949196787
+    ],
+    "surface_min_distance": 0.2141790680595117,
+    "surface_diff": [
+      0.16524675571322966,
+      -0.0907786963990259,
+      0.10161403053312383
+    ],
+    "iou": 0.0,
+    "giou": -0.27758161383855207,
+    "iom": 0.0
+  },
+  "edge_12": {
+    "edge_id": 12,
+    "edge_description": "place mat on top of remote",
+    "num_detections": 16,
+    "object_1_id": 112,
+    "object_1_tag": "place mat",
+    "object_2_id": 113,
+    "object_2_tag": "remote",
+    "relationship": "on top of",
+    "center_distance": 0.021680266268668726,
+    "center_diff": [
+      -0.014072064026403028,
+      -0.00272863359341724,
+      -0.01626547012016756
+    ],
+    "surface_min_distance": 0.0045715141872361455,
+    "surface_diff": [
+      0.002204628282211449,
+      -0.0038399398399773244,
+      -0.0011371974880071065
+    ],
+    "iou": 0.41219443152050544,
+    "giou": 0.406518902470146,
+    "iom": 0.9871459457741504
+  },
+  "edge_13": {
+    "edge_id": 13,
+    "edge_description": "tissue box next to place mat",
+    "num_detections": 6,
+    "object_1_id": 144,
+    "object_1_tag": "tissue box",
+    "object_2_id": 112,
+    "object_2_tag": "place mat",
+    "relationship": "next to",
+    "center_distance": 0.13144994427858847,
+    "center_diff": [
+      -0.06613383791853149,
+      -0.05821931292904586,
+      0.09754955117825634
+    ],
+    "surface_min_distance": 0.04627153978262398,
+    "surface_diff": [
+      0.0035416425606520363,
+      -0.01805773684433168,
+      0.04245503859247331
+    ],
+    "iou": 0.0,
+    "giou": -0.38943473375992954,
+    "iom": 0.0
+  },
+  "edge_14": {
+    "edge_id": 14,
+    "edge_description": "place mat on top of place mat",
+    "num_detections": 0,
+    "object_1_id": 246,
+    "object_1_tag": "place mat",
+    "object_2_id": 112,
+    "object_2_tag": "place mat",
+    "relationship": "on top of",
+    "center_distance": 0.034145703608158814,
+    "center_diff": [
+      0.0225910830279452,
+      -0.011473990485308616,
+      0.022889289741356404
+    ],
+    "surface_min_distance": 0.002674293301507643,
+    "surface_diff": [
+      -0.0025359285220595412,
+      0.0007571086397507587,
+      -0.00038431458612485196
+    ],
+    "iou": 0.10872532471887827,
+    "giou": 0.10872532471887816,
+    "iom": 1.0
+  },
+  "edge_15": {
+    "edge_id": 15,
+    "edge_description": "tissue box on top of remote",
+    "num_detections": 8,
+    "object_1_id": 144,
+    "object_1_tag": "tissue box",
+    "object_2_id": 113,
+    "object_2_tag": "remote",
+    "relationship": "on top of",
+    "center_distance": 0.1294401047804096,
+    "center_diff": [
+      -0.08020590194493452,
+      -0.0609479465224631,
+      0.08128408105808878
+    ],
+    "surface_min_distance": 0.004794541937688942,
+    "surface_diff": [
+      0.001224999307808311,
+      -0.002388517218174069,
+      -0.003972655860581584
+    ],
+    "iou": 0.027587357714493083,
+    "giou": -0.01279396954848027,
+    "iom": 0.7422569729099243
+  },
+  "edge_16": {
+    "edge_id": 16,
+    "edge_description": "place mat on top of remote",
+    "num_detections": 1,
+    "object_1_id": 246,
+    "object_1_tag": "place mat",
+    "object_2_id": 113,
+    "object_2_tag": "remote",
+    "relationship": "on top of",
+    "center_distance": 0.017837129865656255,
+    "center_diff": [
+      0.008519019001542172,
+      -0.014202624078725856,
+      0.006623819621188843
+    ],
+    "surface_min_distance": 0.008361255691769992,
+    "surface_diff": [
+      0.004143129601584569,
+      0.001925029525538663,
+      -0.007002809091602752
+    ],
+    "iou": 0.0456445323090159,
+    "giou": 0.0456445323090159,
+    "iom": 1.0
+  },
+  "edge_17": {
+    "edge_id": 17,
+    "edge_description": "box on top of pillow",
+    "num_detections": 1,
+    "object_1_id": 270,
+    "object_1_tag": "box",
+    "object_2_id": 245,
+    "object_2_tag": "pillow",
+    "relationship": "on top of",
+    "center_distance": 0.11423632951704317,
+    "center_diff": [
+      0.10330504022355819,
+      -0.03985636398294071,
+      -0.028097649296602023
+    ],
+    "surface_min_distance": 0.007548566343177006,
+    "surface_diff": [
+      0.004378839645559962,
+      -0.0060654716706758805,
+      0.0010083008519511105
+    ],
+    "iou": 0.17433113583850132,
+    "giou": 0.03926843922411841,
+    "iom": 0.5945133239142211
+  }
+}

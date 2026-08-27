@@ -1,0 +1,26 @@
+armchair
+backpack
+blanket
+book
+box
+coffee mug
+couch
+cup
+cushion
+footrest
+ottoman
+pillow
+place mat
+plant
+remote
+remote control
+rug
+shoe
+shoes
+slippers
+sneaker
+stool
+tissue box
+tote bag
+towel
+vacuum cleaner

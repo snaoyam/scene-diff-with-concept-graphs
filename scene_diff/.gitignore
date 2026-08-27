@@ -1,5 +1,6 @@
 cyws-3d.ckpt
-output/
+output/scenediff_benchmark/*
+!output/scenediff_benchmark/living_room_17_living_room_18
 vis_figures/
 save_dir/
 .vscode/
@@ -9,6 +10,8 @@ __pycache__/
 data_splits/
 *.pkl
 eval_list_dir/
-data/
+data/scenediff_benchmark.zip
+data/scenediff_benchmark/data/*
+!data/scenediff_benchmark/data/living_room_17_living_room_18
+data/scenediff_benchmark/vis
 checkpoints/sam_vit_h_4b8939.pth
-data

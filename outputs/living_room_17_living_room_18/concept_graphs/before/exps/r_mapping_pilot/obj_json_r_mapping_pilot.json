@@ -1,0 +1,370 @@
+{
+  "object_1": {
+    "id": 0,
+    "object_tag": "remote",
+    "object_caption": "A black remote control on a surface.",
+    "bbox_extent": [
+      0.05,
+      0.01,
+      0.0
+    ],
+    "bbox_center": [
+      -0.16,
+      0.22,
+      0.04
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": null,
+    "recognition_n_visible": 0,
+    "recognition_n_recognized": 0,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.004761248128595067,
+    "extent_ratio": 0.03285484333993947,
+    "is_large": false
+  },
+  "object_2": {
+    "id": 1,
+    "object_tag": "pillow",
+    "object_caption": "A square, textured gray pillow with a patterned design, resting on a couch.",
+    "bbox_extent": [
+      0.17,
+      0.17,
+      0.05
+    ],
+    "bbox_center": [
+      0.2,
+      0.23,
+      -0.18
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 1.0,
+    "recognition_n_visible": 37,
+    "recognition_n_recognized": 37,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.11837391327187245,
+    "extent_ratio": 0.13784608405739793,
+    "is_large": false
+  },
+  "object_3": {
+    "id": 2,
+    "object_tag": "stool",
+    "object_caption": "A small white perforated plastic stool with a grid pattern.",
+    "bbox_extent": [
+      0.16,
+      0.1,
+      0.08
+    ],
+    "bbox_center": [
+      -0.03,
+      0.21,
+      0.23
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.8333333333333334,
+    "recognition_n_visible": 6,
+    "recognition_n_recognized": 5,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.04446589446589447,
+    "extent_ratio": 0.09766057421618905,
+    "is_large": false
+  },
+  "object_4": {
+    "id": 6,
+    "object_tag": "tote bag",
+    "object_caption": "A small beige tote bag with a textured surface, resting on the couch.",
+    "bbox_extent": [
+      0.12,
+      0.07,
+      0.03
+    ],
+    "bbox_center": [
+      0.36,
+      0.14,
+      0.1
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 1.0,
+    "recognition_n_visible": 25,
+    "recognition_n_recognized": 25,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.014498463478055315,
+    "extent_ratio": 0.09653076646469669,
+    "is_large": false
+  },
+  "object_5": {
+    "id": 7,
+    "object_tag": "place mat",
+    "object_caption": "A white rectangular place mat with a circular design, lying on a wooden surface.",
+    "bbox_extent": [
+      0.1,
+      0.08,
+      0.0
+    ],
+    "bbox_center": [
+      -0.1,
+      0.24,
+      -0.01
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 1.0,
+    "recognition_n_visible": 6,
+    "recognition_n_recognized": 6,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.03174165419063378,
+    "extent_ratio": 0.08219391914580532,
+    "is_large": false
+  },
+  "object_6": {
+    "id": 8,
+    "object_tag": "stool",
+    "object_caption": "A small, square-shaped perforated plastic stool with a gray top and black base, positioned on the floor near the couch.",
+    "bbox_extent": [
+      0.24,
+      0.15,
+      0.1
+    ],
+    "bbox_center": [
+      -0.11,
+      0.24,
+      0.02
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.6666666666666666,
+    "recognition_n_visible": 9,
+    "recognition_n_recognized": 6,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.05812518057416016,
+    "extent_ratio": 0.16429550585226957,
+    "is_large": false
+  },
+  "object_7": {
+    "id": 9,
+    "object_tag": "stool",
+    "object_caption": "A white plastic stool with a perforated design and a black base.",
+    "bbox_extent": [
+      0.18,
+      0.08,
+      0.02
+    ],
+    "bbox_center": [
+      -0.06,
+      0.09,
+      0.34
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.75,
+    "recognition_n_visible": 4,
+    "recognition_n_recognized": 3,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.06006356210437843,
+    "extent_ratio": 0.10628495736342504,
+    "is_large": false
+  },
+  "object_8": {
+    "id": 11,
+    "object_tag": "pillow",
+    "object_caption": "A gray pillow with a textured, soft, slightly wrinkled surface, often draped over or resting on the arm of a couch, sometimes partially obscured or featuring a printed design.",
+    "bbox_extent": [
+      0.23,
+      0.21,
+      0.08
+    ],
+    "bbox_center": [
+      0.31,
+      0.08,
+      0.16
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.9565217391304348,
+    "recognition_n_visible": 23,
+    "recognition_n_recognized": 22,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.07889449215979828,
+    "extent_ratio": 0.15049267290299417,
+    "is_large": false
+  },
+  "object_9": {
+    "id": 38,
+    "object_tag": "pillow",
+    "object_caption": "A gray upholstered armchair with a modern design, featuring a curved backrest and multiple cushions, accompanied by a textured gray pillow.",
+    "bbox_extent": [
+      0.85,
+      0.63,
+      0.26
+    ],
+    "bbox_center": [
+      0.13,
+      0.23,
+      -0.04
+    ],
+    "bbox_volume": 0.14,
+    "recognition_confidence": 0.972972972972973,
+    "recognition_n_visible": 37,
+    "recognition_n_recognized": 36,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.49773855488141205,
+    "extent_ratio": 0.6491687561136921,
+    "is_large": true
+  },
+  "object_10": {
+    "id": 122,
+    "object_tag": "pillow",
+    "object_caption": "A square gray pillow with a textured, patterned design featuring gray and white geometric or woven tones, partially visible on a couch, with some variations in pattern and texture including subtle stitching and smooth surfaces.",
+    "bbox_extent": [
+      0.16,
+      0.16,
+      0.04
+    ],
+    "bbox_center": [
+      0.05,
+      0.31,
+      -0.26
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 1.0,
+    "recognition_n_visible": 24,
+    "recognition_n_recognized": 24,
+    "recognition_trusted": true,
+    "mask_coverage_stat": 0.06935623670317548,
+    "extent_ratio": 0.13865181553397035,
+    "is_large": false
+  },
+  "object_11": {
+    "id": 134,
+    "object_tag": "pillow",
+    "object_caption": "A square gray pillow with a textured, geometric woven pattern, featuring dark and light gray tones, placed on the backrest of a couch or armchair.",
+    "bbox_extent": [
+      0.06,
+      0.04,
+      0.02
+    ],
+    "bbox_center": [
+      0.16,
+      0.27,
+      -0.23
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.18181818181818182,
+    "recognition_n_visible": 33,
+    "recognition_n_recognized": 6,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.004468389672471306,
+    "extent_ratio": 0.04757750599475766,
+    "is_large": false
+  },
+  "object_12": {
+    "id": 143,
+    "object_tag": "armchair",
+    "object_caption": "A gray upholstered armchair adorned with multiple pillows.",
+    "bbox_extent": [
+      0.23,
+      0.12,
+      0.04
+    ],
+    "bbox_center": [
+      0.13,
+      0.28,
+      -0.29
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.058823529411764705,
+    "recognition_n_visible": 17,
+    "recognition_n_recognized": 1,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.0006631996427914795,
+    "extent_ratio": 0.1437796415100398,
+    "is_large": false
+  },
+  "object_13": {
+    "id": 179,
+    "object_tag": "stool",
+    "object_caption": "A purple upholstered stool with metal legs.",
+    "bbox_extent": [
+      0.13,
+      0.04,
+      0.02
+    ],
+    "bbox_center": [
+      -0.16,
+      0.46,
+      -0.36
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.5,
+    "recognition_n_visible": 2,
+    "recognition_n_recognized": 1,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.0084574370288656,
+    "extent_ratio": 0.10336683764006198,
+    "is_large": false
+  },
+  "object_14": {
+    "id": 232,
+    "object_tag": "pillow",
+    "object_caption": "A gray pillow with a smooth surface, placed on the backrest of the sofa.",
+    "bbox_extent": [
+      0.22,
+      0.03,
+      0.03
+    ],
+    "bbox_center": [
+      0.52,
+      0.02,
+      0.15
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.16666666666666666,
+    "recognition_n_visible": 6,
+    "recognition_n_recognized": 1,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.00644157276810338,
+    "extent_ratio": 0.19203831964232373,
+    "is_large": false
+  },
+  "object_15": {
+    "id": 238,
+    "object_tag": "pillow",
+    "object_caption": "A gray textured pillow with a dark, woven, brick-like pattern, placed on the couch arm.",
+    "bbox_extent": [
+      0.15,
+      0.08,
+      0.08
+    ],
+    "bbox_center": [
+      0.19,
+      0.26,
+      -0.27
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.09090909090909091,
+    "recognition_n_visible": 33,
+    "recognition_n_recognized": 3,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.024819425839834004,
+    "extent_ratio": 0.10387617566662102,
+    "is_large": false
+  },
+  "object_16": {
+    "id": 249,
+    "object_tag": "pillow",
+    "object_caption": "A beige, textured pillow with a soft, draped appearance, positioned on the left side of the sofa near the armrest.",
+    "bbox_extent": [
+      0.2,
+      0.12,
+      0.04
+    ],
+    "bbox_center": [
+      0.17,
+      0.02,
+      0.28
+    ],
+    "bbox_volume": 0.0,
+    "recognition_confidence": 0.3157894736842105,
+    "recognition_n_visible": 19,
+    "recognition_n_recognized": 6,
+    "recognition_trusted": false,
+    "mask_coverage_stat": 0.1194383158668873,
+    "extent_ratio": 0.13642956312327492,
+    "is_large": false
+  }
+}

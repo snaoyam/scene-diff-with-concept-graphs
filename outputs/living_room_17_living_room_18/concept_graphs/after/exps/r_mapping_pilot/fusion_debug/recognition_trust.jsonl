@@ -1,0 +1,7 @@
+{"obj_num": 49, "class_name": "cup", "n_recognized": 0, "confidence": null, "failed_frame_count": true, "failed_confidence": true}
+{"obj_num": 67, "class_name": "backpack", "n_recognized": 8, "confidence": 0.4, "failed_frame_count": false, "failed_confidence": true}
+{"obj_num": 193, "class_name": "stool", "n_recognized": 1, "confidence": 0.3333333333333333, "failed_frame_count": true, "failed_confidence": true}
+{"obj_num": 245, "class_name": "pillow", "n_recognized": 3, "confidence": 0.2727272727272727, "failed_frame_count": false, "failed_confidence": true}
+{"obj_num": 246, "class_name": "place mat", "n_recognized": 1, "confidence": 0.1111111111111111, "failed_frame_count": true, "failed_confidence": true}
+{"obj_num": 263, "class_name": "cup", "n_recognized": 0, "confidence": null, "failed_frame_count": true, "failed_confidence": true}
+{"obj_num": 270, "class_name": "box", "n_recognized": 1, "confidence": 0.3333333333333333, "failed_frame_count": true, "failed_confidence": true}

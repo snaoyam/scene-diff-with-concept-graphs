@@ -1,0 +1,14 @@
+{"obj_num": 2, "class_name": "pillow", "n_frames_visible": 14, "n_frames_recognized": 14, "confidence": 1.0}
+{"obj_num": 35, "class_name": "pillow", "n_frames_visible": 30, "n_frames_recognized": 30, "confidence": 1.0}
+{"obj_num": 49, "class_name": "cup", "n_frames_visible": 0, "n_frames_recognized": 0, "confidence": null}
+{"obj_num": 55, "class_name": "couch", "n_frames_visible": 37, "n_frames_recognized": 37, "confidence": 1.0}
+{"obj_num": 67, "class_name": "backpack", "n_frames_visible": 20, "n_frames_recognized": 8, "confidence": 0.4}
+{"obj_num": 111, "class_name": "stool", "n_frames_visible": 16, "n_frames_recognized": 13, "confidence": 0.8125}
+{"obj_num": 112, "class_name": "place mat", "n_frames_visible": 18, "n_frames_recognized": 15, "confidence": 0.8333333333333334}
+{"obj_num": 113, "class_name": "remote", "n_frames_visible": 24, "n_frames_recognized": 24, "confidence": 1.0}
+{"obj_num": 144, "class_name": "tissue box", "n_frames_visible": 6, "n_frames_recognized": 6, "confidence": 1.0}
+{"obj_num": 193, "class_name": "stool", "n_frames_visible": 3, "n_frames_recognized": 1, "confidence": 0.3333333333333333}
+{"obj_num": 245, "class_name": "pillow", "n_frames_visible": 11, "n_frames_recognized": 3, "confidence": 0.2727272727272727}
+{"obj_num": 246, "class_name": "place mat", "n_frames_visible": 9, "n_frames_recognized": 1, "confidence": 0.1111111111111111}
+{"obj_num": 263, "class_name": "cup", "n_frames_visible": 0, "n_frames_recognized": 0, "confidence": null}
+{"obj_num": 270, "class_name": "box", "n_frames_visible": 3, "n_frames_recognized": 1, "confidence": 0.3333333333333333}
