@@ -1,38 +1,18 @@
 #!/usr/bin/env bash
+#activate conceptgraph env (/node_data/urp26su_dongwoo/concept-graphs-project/environment.yml)
+conda activate conceptgraph
 
 CUDA_VISIBLE_DEVICES=6 #always only use GPU=6 and do not use any other GPU nodes
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 timestamp="$(date '+%Y-%m-%d_%H-%M-%S')"
 
-# ./scripts/setup.sh가 만들어둔 격리 스냅샷+venv가 있으면 자동으로 사용 (수동 activate/env var 불필요).
-# 다른 터미널에서 setup.sh를 한 번만 실행해도, 이후 어느 터미널에서 run.sh를 실행하든 적용된다.
-# ISOLATED_RUN=0으로 실행하면 격리 스냅샷이 있어도 무시하고 원본 환경에서 실행하며 outputs/에 쓴다.
-# 그 외(기본값)에는 격리 스냅샷을 쓰고 isolated-outputs/에 써서 outputs/와 절대 섞이지 않는다.
-# OUTPUT_ROOT는 scene_pair=...처럼 output_root=...로 매 파이썬 호출에 명시적으로 전달된다
-# (construct-concept-graphs.sh 등 참고) -- 3단계 모두 같은 값을 봐야 하므로 여기서만 정한다.
-ISOLATED_RUN="${ISOLATED_RUN:-1}"
-if [[ "$ISOLATED_RUN" == "0" ]]; then
-    OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/outputs"
-else
-    OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/isolated-outputs"
-fi
-
-ISOLATED_RUN_DIR="$SCRIPT_DIR/../.isolated-runs"
-if [[ "$ISOLATED_RUN" == "0" ]]; then
-    echo "ISOLATED_RUN=0 -- skipping isolated snapshot, using original environment"
-elif [[ -d "$ISOLATED_RUN_DIR/venv" ]]; then
-    ISOLATED_RUN_DIR="$(cd "$ISOLATED_RUN_DIR" && pwd)"
-    echo "isolated code snapshot detected at $ISOLATED_RUN_DIR -- using it (run ./scripts/setup.sh to refresh)"
-    export PATH="$ISOLATED_RUN_DIR/venv/bin:$PATH"
-    export CONCEPT_GRAPHS_ROOT="${CONCEPT_GRAPHS_ROOT:-$ISOLATED_RUN_DIR/concept-graphs}"
-    export SCENE_DIFF_ROOT="${SCENE_DIFF_ROOT:-$ISOLATED_RUN_DIR/scene_diff}"
-fi
+OUTPUT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)/outputs"
 
 source "$SCRIPT_DIR/scene-pairs.sh"
-source "$SCRIPT_DIR/construct-concept-graphs.sh"
-source "$SCRIPT_DIR/convert-concept-graphs-to-scene-diff-benchmark-data.sh"
-source "$SCRIPT_DIR/run-scene-diff-benchmark.sh"
-source "$SCRIPT_DIR/combine-scene-vis-grid.sh"
+source "$SCRIPT_DIR/1.construct-concept-graphs.sh"
+source "$SCRIPT_DIR/2.convert-concept-graphs-to-scene-diff-benchmark-data.sh"
+source "$SCRIPT_DIR/3.run-scene-diff-benchmark.sh"
+source "$SCRIPT_DIR/4.combine-scene-vis-grid.sh"
 
 failed_scenes=()
 

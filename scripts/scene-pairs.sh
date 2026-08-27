@@ -3,8 +3,8 @@ JSON_FILE="/node_data/urp26su_dongwoo/concept-graphs-project/Datasets/scenediff/
 SCENE_PAIRS=($(python -c "import json; d=json.load(open('$JSON_FILE')); print('\n'.join(d.get('varied', []) + d.get('kitchen', [])))" | sort))
 
 SCENE_PAIRS=(
-  lounge_3_lounge_4
-
+  living_room_17_living_room_18
+  # lounge_3_lounge_4
   # P09-20240621-093545_0041_P09-20240621-093545_0044
   # living_room_17_living_room_18
   # table_1_table_2

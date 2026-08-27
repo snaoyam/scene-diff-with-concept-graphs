@@ -12,8 +12,6 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONCEPT_GRAPHS_SLAM_DIR="$(cd "${CONCEPT_GRAPHS_ROOT:-$SCRIPT_DIR/../concept-graphs}/conceptgraph/slam" && pwd)"
-# run.sh sets/exports this; standalone invocation falls back to the yaml's own default
-# (rerun_realtime_mapping.yaml's output_root) by simply not passing an override.
 OUTPUT_ROOT="${OUTPUT_ROOT:-}"
 
 convert_concept_graphs_to_scene_diff_benchmark_data() {

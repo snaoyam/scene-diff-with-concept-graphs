@@ -9,15 +9,6 @@
 #   combine_scene_vis_grid <pair_name>
 #   ./combine-scene-vis-grid.sh <pair_name>
 #
-# GROUND_TRUTH_ROOT overrides where <pair>/gt_mask_viz/<before|after>/ is read from
-# (default: <repo>/ground-truth -- same as scripts/visualize-gt-masks.sh's own default
-# output root). Always computed and passed here rather than left for
-# combine_scene_vis_grid.py to guess from its own file location: under the
-# ./scripts/setup.sh isolated snapshot, that file lives one directory deeper
-# (.isolated-runs/concept-graphs/...) than in the live checkout (concept-graphs/...),
-# so counting parents from __file__ can't land on the right root in both cases --
-# SCRIPT_DIR here is always the true repo's scripts/ (setup.sh never snapshots
-# scripts/), so it always resolves correctly regardless of which code copy is running.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONCEPT_GRAPHS_UTILS_DIR="$(cd "${CONCEPT_GRAPHS_ROOT:-$SCRIPT_DIR/../concept-graphs}/conceptgraph/utils" && pwd)"
