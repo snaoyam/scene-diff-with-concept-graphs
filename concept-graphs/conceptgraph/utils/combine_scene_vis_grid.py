@@ -181,6 +181,20 @@ def _load_output_root(output_root_override: str | None = None) -> Path:
     return Path(cfg.output_root).resolve()
 
 
+def _find_repo_root(start: Path) -> Path:
+    """Walks up from `start` looking for the directory containing both scripts/ and
+    scene_diff/ -- the repo root -- instead of counting a fixed number of parents.
+    A fixed count breaks under the ./scripts/setup.sh isolated snapshot, which nests
+    this file one directory deeper (.isolated-runs/concept-graphs/conceptgraph/...)
+    than the live checkout (concept-graphs/conceptgraph/...) does; .isolated-runs/
+    itself only mirrors concept-graphs/ and scene_diff/, never scripts/, so it's
+    correctly skipped by this check on the way up to the real root."""
+    for candidate in (start, *start.parents):
+        if (candidate / "scripts").is_dir() and (candidate / "scene_diff").is_dir():
+            return candidate
+    return start.parents[3]  # best-effort fallback if those markers ever move
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--pair_name", required=True)
@@ -192,7 +206,7 @@ def main():
     args = parser.parse_args()
 
     output_root = args.output_root or _load_output_root()
-    ground_truth_root = args.ground_truth_root or (Path(__file__).resolve().parents[3] / "ground-truth")
+    ground_truth_root = args.ground_truth_root or (_find_repo_root(Path(__file__).resolve()) / "ground-truth")
 
     combine_scene_vis_grid(
         pair_name=args.pair_name,

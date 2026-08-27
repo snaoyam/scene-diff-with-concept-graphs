@@ -5,7 +5,15 @@ scored by scene_diff/scripts/evaluate_multiview.py (run_scene_diff_benchmark.py,
 
 Matching: before/after ConceptGraphs share one Pi3-estimated coordinate frame (see
 conceptgraph/hydra_configs/rerun_realtime_mapping.yaml), so their 3D geometry is
-directly comparable. Two stages:
+directly comparable -- but that frame's scale is arbitrary and scene-dependent (a
+pilot scene's objects span roughly 1 unit end to end, another scene's may not), so
+scenediff_max_match_distance_ratio and scenediff_moved_threshold_ratio are RATIOS of
+the scene's own diagonal (scene_scale_diagonal(before_objs + after_objs), resolved once
+in convert()), not absolute distances -- an absolute number tuned to look right on one
+scene's scale is systematically wrong on another's. scenediff_geometric_match_max_distance
+is the one exception, deliberately left absolute: it mirrors the same-scan fusion
+tolerance tau (downsample_voxel_size * fusion_point_distance_factor), a reconstruction
+noise floor rather than a room-relative quantity. Two stages:
 
   1. Geometry. Among pairs whose AABBs overlap, trimmed_surface_distance (pooled
      two-way nearest-neighbour distances, worst tail trimmed) at or under
@@ -25,7 +33,7 @@ object regardless of trust is available to match against:
 
     trusted before object, no match -> removed
     trusted after  object, no match -> added
-    matched, centroid moved > scenediff_moved_threshold -> moved
+    matched, centroid moved > scenediff_moved_threshold_ratio * scene_diag -> moved
     matched and still in place -> unchanged, not a change, not exported
 
 Because matching is many-to-many and each side judges for itself, one physical move can
@@ -723,7 +731,7 @@ def save_debug_mask_visualizations(pair_name: str, object_masks: dict, H: int, W
 
 
 def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, exp_suffix: str,
-            cfg, max_match_distance: float, moved_threshold: float, sim_threshold: float,
+            cfg, max_match_distance_ratio: float, moved_threshold_ratio: float, sim_threshold: float,
             exclude_large: bool = True, ignore_confidence_and_visibility: bool = False):
     # Built up front because load_objects needs it for the is_large backfill; the same
     # instance is reused for the cross-visibility pass further down.
@@ -735,6 +743,23 @@ def convert(pair_name: str, concept_graphs_dir: Path, benchmark_data_dir: Path, 
     # variant persisted this (see save_pointcloud()'s up_axis/up_direction params).
     up_axis = before_up_axis if before_up_axis is not None else after_up_axis
     up_direction = before_up_direction if before_up_axis is not None else after_up_direction
+
+    # max_match_distance/moved_threshold arrive as RATIOS of the scene's own diagonal,
+    # not absolute distances (see scene_scale_diagonal and the module docstring): the
+    # Pi3 reconstruction's scale is arbitrary and scene-dependent, so a fixed absolute
+    # number tuned to look right on one scene's scale is systematically wrong on
+    # another's. Resolved from before+after TOGETHER (not either side alone) because
+    # they share one coordinate frame and this is a cross-scan distance -- either side
+    # alone is biased by how much of the room that scan's camera happened to cover
+    # (measured on P09-20240621-093545_0041_0044: before-only diag 1.221 vs after-only
+    # 0.748, same shared room). Falls back to 1.0 (ratio == absolute distance) only
+    # when neither side has a single point to measure, in which case match_geometrically
+    # / match_semantically return no candidates anyway and the value is never used.
+    scene_diag = scene_scale_diagonal(before_objs + after_objs) or 1.0
+    max_match_distance = max_match_distance_ratio * scene_diag
+    moved_threshold = moved_threshold_ratio * scene_diag
+    print(f"[{pair_name}] scene_diag={scene_diag:.4f} -> "
+          f"max_match_distance={max_match_distance:.4f} moved_threshold={moved_threshold:.4f}")
 
     # Fail here rather than midway through matching: a pcd written before the
     # mean-feature fields existed cannot be compared, and silently substituting
@@ -834,10 +859,15 @@ def main():
     parser.add_argument("--pair_name", required=True)
     # These default to None so the yaml stays the single source of truth; pass one only
     # to override it for a single run.
-    parser.add_argument("--max_match_distance", type=float, default=None,
-                         help="Max 3D centroid distance (meters) to even consider two objects the same")
-    parser.add_argument("--moved_threshold", type=float, default=None,
-                         help="3D centroid distance (meters) above which a matched pair counts as 'moved'")
+    parser.add_argument("--max_match_distance_ratio", type=float, default=None,
+                         help="Max 3D centroid distance to even consider two objects the same, "
+                              "as a ratio of the scene's own diagonal (scene_scale_diagonal) -- "
+                              "NOT an absolute distance, since the Pi3 reconstruction's scale is "
+                              "arbitrary and scene-dependent")
+    parser.add_argument("--moved_threshold_ratio", type=float, default=None,
+                         help="3D centroid distance above which a matched pair counts as 'moved', "
+                              "as a ratio of the scene's own diagonal (scene_scale_diagonal) -- "
+                              "NOT an absolute distance, same reasoning as max_match_distance_ratio")
     parser.add_argument("--sim_threshold", type=float, default=None,
                          help="Minimum semantic similarity (mean CLIP+DINO cosine over all frame pairs) to call two objects the same")
     parser.add_argument("--output_root", default=None,
@@ -873,8 +903,8 @@ def main():
         benchmark_data_dir=scene_root / "benchmark_data",
         exp_suffix=EXP_SUFFIX,
         cfg=cfg,
-        max_match_distance=pick(args.max_match_distance, "scenediff_max_match_distance"),
-        moved_threshold=pick(args.moved_threshold, "scenediff_moved_threshold"),
+        max_match_distance_ratio=pick(args.max_match_distance_ratio, "scenediff_max_match_distance_ratio"),
+        moved_threshold_ratio=pick(args.moved_threshold_ratio, "scenediff_moved_threshold_ratio"),
         sim_threshold=pick(args.sim_threshold, "scenediff_semantic_sim_threshold"),
         exclude_large=(bool(cfg.get("scenediff_exclude_large_objects", True))
                        if args.exclude_large is None else args.exclude_large),

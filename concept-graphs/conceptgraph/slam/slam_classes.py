@@ -71,16 +71,6 @@ class MapObjectList(DetectionList):
             del s_obj_dict['pcd']
             del s_obj_dict['bbox']
 
-            # Seed-descended objects only (load_prior_scene_objects_as_seeds,
-            # slam/utils.py) -- an open3d PointCloud, same as 'pcd'/'bbox' above, so it
-            # can't go through pickle.dump() as-is either. Kept as a numpy trace (how
-            # much of this object this scan itself re-confirmed) rather than dropped
-            # outright, since it's otherwise the only record of that distinction once
-            # 'pcd_np' has already folded the seed's original points back in.
-            if 'confirmed_pcd' in s_obj_dict:
-                s_obj_dict['confirmed_pcd_np'] = np.asarray(s_obj_dict['confirmed_pcd'].points)
-                del s_obj_dict['confirmed_pcd']
-
             s_obj_list.append(s_obj_dict)
 
         return s_obj_list

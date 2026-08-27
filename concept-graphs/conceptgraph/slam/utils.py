@@ -1,9 +1,7 @@
 from collections import Counter
 import copy
-import gzip
 import json
 import logging
-import pickle
 from pathlib import Path
 # from conceptgraph.utils.logging_metrics import track_denoising,
 from conceptgraph.utils.logging_metrics import DenoisingTracker, MappingTracker
@@ -205,22 +203,14 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     extend_attributes = ['image_idx', 'mask_idx', 'color_path', 'class_id', 'mask', 'xyxy', 'conf', 'contain_number', 'captions',
                           'mask_coverage']
     add_attributes = ['num_detections', 'num_obj_in_class']
-    # 'is_seeded_prior'/'seed_source_before_id' (load_prior_scene_objects_as_seeds):
-    # obj2 can itself be a seed here, not just obj1 -- fuse_detections_geometry_only
-    # bridges multiple matched candidates into one anchor, and a seed can be one of the
-    # OTHER candidates being folded in, not only the anchor. Skipping them means obj1
-    # keeps its own seed status (or lack of it) regardless of obj2's; the fields exist
-    # only for post-hoc traceability and are never read to make a fusion decision.
     # 'is_large'/'mask_coverage_stat'/'extent_ratio' are derived, not carried: the merged
     # object's size is not obj1's or obj2's but the union's, so keeping obj1's value here
     # would be wrong in exactly the case that matters. fuse_detections_geometry_only
     # recomputes them on the anchor right after each merge; listing them here only stops
     # the unhandled-key check below from rejecting an object that already has them.
     skip_attributes = ['id', 'class_name', 'is_background', 'new_counter', 'curr_obj_num', 'inst_color',
-                        'is_seeded_prior', 'seed_source_before_id',
                         'is_large', 'mask_coverage_stat', 'extent_ratio']  # 'inst_color' just keeps obj1's
-    custom_handled = ['pcd', 'bbox', 'clip_ft', 'dino_ft', 'clip_ft_mean', 'dino_ft_mean', 'text_ft', 'n_points',
-                       'confirmed_pcd']
+    custom_handled = ['pcd', 'bbox', 'clip_ft', 'dino_ft', 'clip_ft_mean', 'dino_ft_mean', 'text_ft', 'n_points']
 
     # Check for unhandled keys and throw an error if there are
     all_handled_keys = set(extend_attributes + add_attributes + skip_attributes + custom_handled)
@@ -256,17 +246,6 @@ def merge_obj2_into_obj1(obj1, obj2, downsample_voxel_size, dbscan_remove_noise,
     # Update 'bbox'
     obj1['bbox'] = get_bounding_box(spatial_sim_type, obj1['pcd'])
     obj1['bbox'].color = [0, 1, 0]
-
-    # confirmed_pcd only exists on seed-descended objects (load_prior_scene_objects_as_seeds)
-    # -- grow it in lockstep with 'pcd', but only from obj2's own CONFIRMED share: if obj2 is
-    # itself a seed, that's obj2['confirmed_pcd'] (not its whole pcd, which may still carry
-    # unconfirmed seed geometry); otherwise obj2 is a real detection or an ordinary
-    # (never-seeded) object, and its entire pcd counts as confirmed by this scan.
-    if 'confirmed_pcd' in obj1:
-        obj1['confirmed_pcd'] += obj2.get('confirmed_pcd', obj2['pcd'])
-        obj1['confirmed_pcd'] = process_pcd(
-            obj1['confirmed_pcd'], downsample_voxel_size, dbscan_remove_noise, dbscan_eps, dbscan_min_points, run_dbscan
-        )
 
     # Merge and normalize 'clip_ft'
     obj1['clip_ft'] = (obj1['clip_ft'] * n_obj1_det + obj2['clip_ft'] * n_obj2_det) / (n_obj1_det + n_obj2_det)
@@ -893,135 +872,6 @@ def make_detection_list_from_pcd_and_gobs(
 
     return detection_list # , bg_detection_list
 
-
-def load_prior_scene_objects_as_seeds(
-    prior_pcd_path,
-    obj_classes,
-    downsample_voxel_size,
-    dbscan_remove_noise,
-    dbscan_eps,
-    dbscan_min_points,
-    spatial_sim_type,
-):
-    '''
-    Loads a previously-built scene variant's final object list (e.g. "before", for
-    the "after" variant currently being scanned) and reconstructs its trusted,
-    non-background objects as seed candidates for this scan's geometry-only fusion.
-
-    A seed only carries geometry/appearance/class identity forward -- num_detections
-    starts at 0 and image_idx/mask/xyxy/etc start empty, exactly like a real
-    detection dict except with zero detections instead of one. It participates in
-    the same bbox/point-overlap/normal-consistency gates as any accumulated object
-    (see geometric_fusion.fuse_detections_geometry_only), so a real per-frame
-    detection either merges into it (num_detections becomes >0, extend_attributes
-    get populated -- the object behaves as if it had always been in `objects`) or
-    doesn't (the physical object moved/is gone, or the detector never proposed
-    anything there). Either way num_detections is the ground truth of whether this
-    scan itself ever re-confirmed the object -- the caller MUST drop any seed still
-    at num_detections==0 before this scan's objects are treated as final, or an
-    unconfirmed seed would misrepresent a removed/moved object as still present.
-
-    Loaded objects only ever supply geometry/pcd_np, pcd_color_np, clip_ft, dino_ft,
-    clip_ft_mean, dino_ft_mean, class_name -- pcd/bbox are not stored in the saved
-    file (see MapObjectList.to_serializable) and are rebuilt here the same way a
-    fresh detection's are (init_process_pcd + get_bounding_box), with normals left
-    unset so they're computed lazily the same way a real new object's are.
-    '''
-    global tracker
-
-    with gzip.open(prior_pcd_path, "rb") as f:
-        data = pickle.load(f)
-
-    classes_arr = obj_classes.get_classes_arr()
-    seeds = DetectionList()
-    for obj in data["objects"]:
-        if obj.get("is_background", False):
-            continue
-        # Default True mirrors convert_concept_graphs_to_scene_diff_benchmark_data.py's
-        # own obj.get("recognition_trusted", True) -- an object never subjected to the
-        # recognition-confidence pass (cfg.compute_recognition_confidence=False) is
-        # trusted by default rather than being silently excluded from seeding.
-        if not obj.get("recognition_trusted", True):
-            continue
-        # Same reasoning one step further: a large object is barred from asserting a
-        # change anyway, so seeding one buys nothing, while a seed the size of a sofa
-        # sitting in the candidate list from frame 0 is the single best-placed thing in
-        # the scan to absorb everything resting on it. Absent on graphs built before the
-        # flag existed, which then seed exactly as they used to.
-        if obj.get("is_large", False):
-            continue
-
-        class_name = obj["class_name"]
-        try:
-            class_id = classes_arr.index(class_name)
-        except ValueError:
-            logging.warning(
-                f"load_prior_scene_objects_as_seeds: prior object class "
-                f"'{class_name}' not found in this scan's vocabulary; skipping seed."
-            )
-            continue
-
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(np.asarray(obj["pcd_np"]))
-        pcd.colors = o3d.utility.Vector3dVector(np.asarray(obj["pcd_color_np"]))
-        pcd = init_process_pcd(pcd, downsample_voxel_size, dbscan_remove_noise, dbscan_eps, dbscan_min_points)
-        if len(pcd.points) == 0:
-            continue
-        bbox = get_bounding_box(spatial_sim_type, pcd)
-
-        num_obj_in_class = tracker.curr_class_count[class_name]
-
-        seed = {
-            'id': uuid.uuid4(),
-            'image_idx': [],
-            'mask_idx': [],
-            'color_path': [],
-            'class_name': class_name,
-            'class_id': [class_id],
-            'captions': [],
-            'num_detections': 0,
-            'mask': [],
-            'mask_coverage': [],
-            'xyxy': [],
-            'conf': [],
-            'n_points': len(pcd.points),
-            'contain_number': [],
-            'inst_color': np.random.rand(3),
-            'is_background': False,
-
-            'pcd': pcd,
-            'bbox': bbox,
-            'clip_ft': to_tensor(obj['clip_ft']),
-            'dino_ft': to_tensor(obj['dino_ft']),
-            'clip_ft_mean': to_tensor(obj['clip_ft_mean']),
-            'dino_ft_mean': to_tensor(obj['dino_ft_mean']),
-            'num_obj_in_class': num_obj_in_class,
-            'curr_obj_num': tracker.total_object_count,
-            'new_counter': tracker.brand_new_counter,
-
-            # Seed-only bookkeeping, consumed by rerun_realtime_mapping.py's "after"
-            # branch to drop still-unconfirmed seeds, and left on confirmed objects
-            # for later analysis. merge_obj2_into_obj1 only validates obj2's (the
-            # incoming real detection's) keys, so these extra keys on a seed acting
-            # as obj1 pass through untouched by every merge.
-            'is_seeded_prior': True,
-            'seed_source_before_id': obj['id'],
-            # Points contributed by THIS scan's own real detections only -- starts
-            # empty since the seed itself carries none. merge_obj2_into_obj1 grows
-            # this in lockstep with 'pcd' whenever this object is obj1, but only ever
-            # from obj2's *confirmed* share (its own confirmed_pcd if it has one,
-            # otherwise its whole pcd -- see merge_obj2_into_obj1). A plain object
-            # (no seed history) never gets this key at all: geometric_fusion.py reads
-            # its absence as "every one of this object's points is already confirmed
-            # by this scan", which is trivially true for a non-seeded object.
-            'confirmed_pcd': o3d.geometry.PointCloud(),
-        }
-        seeds.append(seed)
-
-        tracker.curr_class_count[class_name] += 1
-        tracker.total_object_count += 1
-
-    return seeds
 
 # @profile
 def dynamic_downsample(points, colors=None, target=5000):

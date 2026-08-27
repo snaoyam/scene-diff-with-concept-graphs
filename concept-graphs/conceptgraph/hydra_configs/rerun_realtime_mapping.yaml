@@ -188,21 +188,15 @@ fusion_min_visible_points: 16          # fewer visible object points than this c
 #                 resting on a cushion -- their 3D points can sit within tau of each other
 #                 over a large contact area, not just a thin rim) is impossible on screen:
 #                 a point a centimetre to the side lands on a different pixel/mask.
-#                 Blind spot: a "before"-scan-seeded object's stale footprint (slam/utils.py's
-#                 load_prior_scene_objects_as_seeds) can still swallow a new thin object
-#                 placed flush against it, since the occlusion test's tolerance can't always
-#                 tell "the same surface" from "something new sitting on top of it".
 #   point_3d   -- nearest-neighbour ratios in 3D (fraction of one cloud within
 #                 fusion_point_distance_factor * downsample_voxel_size of the other), no
-#                 camera involved. Fixes the seeded-surface blind spot above, at the cost of
-#                 reopening the sideways-leak risk projection was built to close. This is
-#                 also the automatic fallback whenever projection can't be formed (no view,
-#                 or too few of the object's points fall in this frame's frustum) --
-#                 geometric_fusion._eroded_mask_subset trims the detection's own mask-boundary
-#                 points first in that fallback case, but does not help the sideways leak in
-#                 general (a small object whose ENTIRE mask sits near another's boundary, not
-#                 just its edge, still leaks) and does not help the seeded-surface blind spot
-#                 at all (that's a projection-mode-only failure).
+#                 camera involved. Reopens the sideways-leak risk projection was built to
+#                 close. This is also the automatic fallback whenever projection can't be
+#                 formed (no view, or too few of the object's points fall in this frame's
+#                 frustum) -- geometric_fusion._eroded_mask_subset trims the detection's
+#                 own mask-boundary points first in that fallback case, but does not help
+#                 the sideways leak in general (a small object whose ENTIRE mask sits near
+#                 another's boundary, not just its edge, still leaks).
 fusion_association_gate_mode: projection
 
 # Closing radius for the projected footprint used by projected_footprint() -- the
@@ -228,21 +222,6 @@ fusion_normal_consistency_thresh: 0.70 # required fraction of agreeing correspon
                                         # over the tau-inlier correspondences only
 fusion_normal_max_nn: 30               # KDTreeSearchParamHybrid max_nn for estimate_normals
 
-# Seed-descended objects only (slam/utils.py's load_prior_scene_objects_as_seeds): once a
-# detection passes the spatial gate against the object's FULL geometry (seed + confirmed),
-# a second spatial check runs against 'confirmed_pcd' alone -- the object's this-scan-only
-# share, i.e. what its geometry would be if the carried-over seed points didn't exist. If
-# that second check independently passes on its own, the object already has enough of
-# THIS scan's own evidence and the match is accepted with no further check, same as any
-# ordinary object. If not, spatial proximity to the (possibly stale) seed footprint alone
-# isn't trusted -- CLIP+DINO similarity between the detection and the object must also
-# clear this floor. Same formula, weights, and starting value as
-# scenediff_semantic_sim_threshold/scenediff_clip_weight/scenediff_dino_weight (the
-# offline before/after comparison's own appearance check) -- kept as a separate key since
-# this one gates a live, per-frame decision rather than an after-the-fact comparison and
-# may need retuning independently.
-fusion_seed_semantic_sim_threshold: 0.62
-
 # After every object's geometry is final, re-walk the whole sequence once more (no
 # detection, just each frame's pose+depth) and for each object ask: over the frames
 # from which this object's FINAL shape should have been visible (same frustum +
@@ -264,8 +243,8 @@ compute_recognition_confidence: !!bool True
 # the other side regardless of its trust. An object too weak to claim a change from is
 # still perfectly good evidence that something is there, which is why it is kept.
 # No-op when compute_recognition_confidence is False -- no metric, no basis to doubt.
-recognition_min_recognized_frames: 1    # must be recognized in at least this many frames
-recognition_min_confidence: 0.40        # recognition_confidence must be at least this
+recognition_min_recognized_frames: 2    # must be recognized in at least this many frames
+recognition_min_confidence: 0.50        # recognition_confidence must be at least this
 
 # ---- Large-object exclusion (annotate_large_objects, slam/geometric_fusion.py) ----
 #
@@ -310,18 +289,12 @@ large_object_min_detections: 3          # too few masks for a percentile to mean
 # For reference the SceneDiff baseline scores 0.3097 px/im IoU on that bathroom pair.
 large_object_extent_ratio_thresh: 0.30
 
-# While a scan runs, an object already marked is_large stops being offered as a fusion
-# candidate for new detections, so it cannot keep swallowing what sits on it. It is NOT
-# excluded from the post-scan object-object sweep (global_geometry_consolidation), so
-# the fragments this splits a large surface into are collected back into one node at
-# the end -- absorption is blocked, node identity is not.
-#
-# On the two pilot scenes this measured as an exact no-op: identical scores and identical
-# object counts with it on and off. That is not evidence it does nothing in general, only
-# that on these scenes max_mask_area_ratio had already removed the frame-filling masks
-# through which a large node would have done its swallowing. Left on because it is the
-# direct guard for the failure it names, and it costs nothing when nothing is large.
-fusion_exclude_large_from_fusion: !!bool True
+# is_large no longer withholds an object from being a fusion candidate during
+# construction (removed: fusion_exclude_large_from_fusion). is_large is reserved for
+# the SceneDiff comparison stage (scenediff_exclude_large_objects, below) -- it has no
+# effect on the graph construction/fusion stage. The containment guard just below
+# (fusion_containment_weak_min) is what actually stops a growing surface from
+# swallowing what rests on it, per detection, regardless of size.
 
 # Guard on the "strong" association direction, applied per DETECTION (in
 # fuse_detections_geometry_only) rather than per candidate pair. The gate takes the
@@ -399,6 +372,13 @@ ablation_disable_confidence_visibility_filter: !!bool False
 # it geometrically keeps it off the semantic threshold's shoulders. The distance matches
 # the tau used for position-only merging between frames during a scan
 # (downsample_voxel_size 0.01 * fusion_point_distance_factor 1.5).
+#
+# Deliberately left as an ABSOLUTE distance, unlike scenediff_max_match_distance_ratio
+# and scenediff_moved_threshold_ratio below: it stands in for reconstruction noise (two
+# clouds of the SAME surface, reconstructed twice, sitting almost exactly on top of each
+# other), which is roughly constant in this coordinate frame regardless of how much
+# room the scene happens to span, not a room-relative quantity like "did this object
+# travel a meaningful distance."
 scenediff_geometric_match_max_distance: 0.015
 scenediff_geometric_match_keep_fraction: 0.7   # average only the smallest this fraction of
                                                 # the pooled distances, so partial overlap
@@ -418,8 +398,27 @@ scenediff_semantic_sim_threshold: 0.62
 scenediff_clip_weight: 0.5
 scenediff_dino_weight: 0.5
 #
-scenediff_max_match_distance: 1.5   # beyond this centroid distance a pair is never a match
-scenediff_moved_threshold: 0.3      # a matched pair further apart than this counts as moved
+# Both of these are RATIOS of scene_scale_diagonal(before_objs + after_objs) -- the
+# scene's own diagonal in this shared-but-arbitrary Pi3 coordinate frame -- resolved to
+# an absolute distance once in convert(), NOT absolute distances themselves (unlike
+# scenediff_geometric_match_max_distance above). A fixed absolute number here would be
+# systematically wrong from one scene to the next: measured on
+# P09-20240621-093545_0041_0044 (combined before+after diag 1.193), the old fixed
+# scenediff_moved_threshold=0.3 sat at 25% of the scene -- so a pot visibly relocated
+# from the counter onto the stove (centroid distance 0.117, a 0.749-similarity
+# CLIP+DINO match, i.e. correctly matched) measured only 9.8% of the scene and was
+# silently kept as "unchanged", while the one move that DID clear the old threshold
+# measured 37.7%. Genuinely-unmoved pairs (settled by the geometric stage above, so
+# their point clouds already nearly coincide) sat at 0.1%-1.4% of the same diagonal --
+# comfortably below moved_threshold_ratio's 5%, so this isn't just loosening the old
+# bug away into false positives on reconstruction noise.
+# PROVISIONAL -- both derived from this one scene pair; re-check once more scenes with
+# known ground-truth moves are available. moved_threshold_ratio in particular only has
+# one confirmed real-move data point (9.8%) to sit above and one noise ceiling (1.4%) to
+# sit below -- 5% is the midpoint-ish choice, not a measured gap the way
+# scenediff_semantic_sim_threshold's 0.62 is.
+scenediff_max_match_distance_ratio: 1.0    # beyond this centroid distance a pair is never a match
+scenediff_moved_threshold_ratio: 0.05      # a matched pair further apart than this counts as moved
 scenediff_exclude_large_objects: !!bool True   # is_large objects may be matched against but
                                                 # never asserted as added/removed/moved, exactly
                                                 # as recognition_trusted=False objects are

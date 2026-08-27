@@ -113,23 +113,23 @@ for scene_id in "${scene_ids[@]}"; do
     fi
 done
 
-if [[ ${#regen_needed[@]} -gt 0 ]]; then
-    echo
-    echo "=== regenerate-fused-and-scenegraph-viz needed for: ${regen_needed[*]} ==="
-    "$SCRIPT_DIR/regenerate-fused-and-scenegraph-viz.sh" "${regen_needed[@]}"
-    regen_status=$?
-else
-    echo "no scene needs regenerate-fused-and-scenegraph-viz.sh"
-    regen_status=0
-fi
+# if [[ ${#regen_needed[@]} -gt 0 ]]; then
+#     echo
+#     echo "=== regenerate-fused-and-scenegraph-viz needed for: ${regen_needed[*]} ==="
+#     "$SCRIPT_DIR/regenerate-fused-and-scenegraph-viz.sh" "${regen_needed[@]}"
+#     regen_status=$?
+# else
+#     echo "no scene needs regenerate-fused-and-scenegraph-viz.sh"
+#     regen_status=0
+# fi
+
+regen_status=0
 
 source "$SCRIPT_DIR/combine-scene-vis-grid.sh"
 
 vis_needed=()
 for scene_id in "${scene_ids[@]}"; do
-    if [[ -f "$OUTPUT_ROOT/$scene_id/benchmark_result/eval_result.txt" ]] && _needs_vis_grid "$scene_id"; then
-        vis_needed+=("$scene_id")
-    fi
+    vis_needed+=("$scene_id")
 done
 
 vis_failed=()

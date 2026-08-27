@@ -39,27 +39,13 @@ the footprint is restricted to what was visible from here.
 
 A pure-3D nearest-neighbour variant of both ratios (ASSOCIATION_MODE_POINT_3D --
 counting a point as "covered" whenever some point of the other cloud lies within tau,
-with no camera/projection involved at all) was tried in between and reverted back to
-this projection-based default. It has a real advantage for a "before"-scan-seeded object
-(see load_prior_scene_objects_as_seeds in slam/utils.py): projection's occlusion test
-is tolerance-based and can't always tell "the same surface" apart from "a new thin
-object now sitting flush against it" (e.g. a book on a previously-bare desk seed), so a
-seed's stale footprint can swallow the new object's own detection where a pure 3D check
-wouldn't. But 3D reopened a worse, more common problem: "some point of the other cloud
-lies within tau" is weak evidence, and on screen a point a centimetre to the side lands
-on a different pixel/mask, so sideways leakage across genuinely different-but-touching
-objects (a blanket draped on a sofa, a pillow resting on a cushion) was impossible under
+with no camera/projection involved at all) was tried and reverted back to this
+projection-based default: "some point of the other cloud lies within tau" is weak
+evidence, and on screen a point a centimetre to the side lands on a different
+pixel/mask, so sideways leakage across genuinely different-but-touching objects (a
+blanket draped on a sofa, a pillow resting on a cushion) was impossible under
 projection and came back under 3D -- see the leak discussion below, which is what this
-reverts to fixing. The seed/thin-object-on-seed risk 3D was covering is back as a known
-gap in the SPATIAL gate specifically; _eroded_mask_subset (still used by the 3D fallback
-paths described below) does not help it, since that trims the DETECTION's own mask
-boundary, not the SEED's stale footprint. What does help: evaluate_detection_gates now
-backstops a seed-descended object (has 'confirmed_pcd', see load_prior_scene_objects_as_seeds)
-with a CLIP+DINO similarity check whenever that object's this-scan-only geometry can't yet
-independently confirm the spatial match on its own -- a new book on a desk seed looks
-nothing like the desk it's spatially close to, so it fails that check even though the
-desk's stale footprint still spatially swallows it. See evaluate_detection_gates' own
-docstring for the exact two-stage rule.
+reverts to fixing.
 
 Sideways leakage on screen is impossible in principle -- a point a centimetre to the
 side of a genuinely different object lands on a different pixel, which belongs to a
@@ -124,11 +110,6 @@ ASSOCIATION_MODE_POINT_3D = "point_3d"      # 3D: nearest-neighbour ratios, kept
 REASON_TOO_FEW_POINTS = "too_few_points"
 REASON_BBOX_REJECT = "bbox_reject"
 REASON_POINT_OVERLAP_REJECT = "point_overlap_reject"
-# Passed the spatial gate against a seed-descended object's FULL geometry (seed +
-# confirmed), but that object's confirmed-only share (see slam/utils.py's
-# load_prior_scene_objects_as_seeds) didn't independently pass, and CLIP+DINO
-# similarity to the detection fell short too -- see evaluate_detection_gates.
-REASON_APPEARANCE_REJECT = "appearance_reject"
 # evaluate_object_pair_gates only (see its docstring for why online per-frame fusion
 # doesn't use this): the tau-inlier correspondence points' surface normals disagree.
 REASON_NORMAL_REJECT = "normal_reject"
@@ -158,9 +139,6 @@ class GeometryFusionParams:
     min_visible_points: int             # below this, the containment direction carries no evidence
     association_gate_mode: str          # ASSOCIATION_MODE_PROJECTION (default) | ASSOCIATION_MODE_POINT_3D
     projection_close_factor: float      # closing radius = factor * fx * voxel / z  [px]
-    seed_semantic_sim_threshold: float  # CLIP+DINO similarity floor for a seed-descended
-                                         # object whose confirmed-only geometry doesn't yet
-                                         # independently pass the spatial gate on its own
     # evaluate_object_pair_gates only -- see its docstring for why online per-frame
     # fusion (evaluate_detection_gates) doesn't use these.
     normal_radius: float                 # downsample_voxel_size * normal_radius_factor
@@ -180,7 +158,6 @@ class GeometryFusionParams:
     large_object_coverage_thresh: float | None
     large_object_min_detections: int
     large_object_extent_ratio_thresh: float | None
-    exclude_large_from_fusion: bool
     # Floor on the weak ratio before a strong-direction pass is taken at face value;
     # None disables the guard. See evaluate_detection_gates.
     containment_weak_min: float | None
@@ -228,7 +205,6 @@ def geometry_fusion_params_from_cfg(cfg) -> GeometryFusionParams:
         min_visible_points=int(cfg['fusion_min_visible_points']),
         association_gate_mode=str(cfg['fusion_association_gate_mode']),
         projection_close_factor=float(cfg['fusion_projection_close_factor']),
-        seed_semantic_sim_threshold=float(cfg['fusion_seed_semantic_sim_threshold']),
         normal_radius=voxel * float(cfg['fusion_normal_radius_factor']),
         normal_max_nn=int(cfg['fusion_normal_max_nn']),
         normal_cos_thresh=math.cos(math.radians(float(cfg['fusion_normal_angle_thresh_deg']))),
@@ -240,7 +216,6 @@ def geometry_fusion_params_from_cfg(cfg) -> GeometryFusionParams:
         large_object_coverage_thresh=_cfg_get_optional_float(cfg, 'large_object_coverage_thresh'),
         large_object_min_detections=int(_cfg_get(cfg, 'large_object_min_detections', 3)),
         large_object_extent_ratio_thresh=_cfg_get_optional_float(cfg, 'large_object_extent_ratio_thresh'),
-        exclude_large_from_fusion=bool(_cfg_get(cfg, 'fusion_exclude_large_from_fusion', True)),
         containment_weak_min=_cfg_get_optional_float(cfg, 'fusion_containment_weak_min'),
         downsample_voxel_size=voxel,
         dbscan_remove_noise=bool(cfg['dbscan_remove_noise']),
@@ -730,14 +705,10 @@ def _association_by_projection(det, obj_pcd, params: GeometryFusionParams, view:
 def _association_overlap(det, det_eroded_idx, target_pcd, params: GeometryFusionParams,
                           view: FrameView, visibility: "_VisibilityCache", record: dict):
     '''
-    Core of the association gate, generalized to any target point cloud -- normally
-    obj['pcd'], but evaluate_detection_gates also calls this against
-    obj['confirmed_pcd'] (a seed-descended object's this-scan-only share, see
-    slam/utils.py's load_prior_scene_objects_as_seeds) to decide whether that object
-    still needs an appearance check. Writes its diagnostic fields into `record`
-    (n_visible_obj_points, projection ratios, footprint pixel counts, overlap_*) --
-    pass a scratch dict for a call whose diagnostics shouldn't clobber the primary
-    call's fields in the caller's real record.
+    Core of the association gate: strong/weak overlap between a detection and one
+    candidate object's point cloud (target_pcd, normally obj['pcd']). Writes its
+    diagnostic fields into `record` (n_visible_obj_points, projection ratios,
+    footprint pixel counts, overlap_*).
 
     Returns (strong_overlap, weak_overlap, used_projection).
     '''
@@ -769,21 +740,6 @@ def _association_overlap(det, det_eroded_idx, target_pcd, params: GeometryFusion
     return strong_overlap, weak_overlap, used_projection
 
 
-def _clip_dino_similarity(det, obj, clip_weight: float = 0.5, dino_weight: float = 0.5) -> float:
-    '''
-    How alike a detection and an object look, via the same weighted-dot-product formula
-    convert_concept_graphs_to_scene_diff_benchmark_data.py's semantic_similarity() uses
-    for the offline before/after comparison (clip_ft_mean/dino_ft_mean are running means
-    of L2-normalized per-frame features, never renormalized, so their dot product IS the
-    average cosine similarity over every frame pair -- see that function's docstring).
-    Cast to float32 here since det's and obj's features aren't guaranteed to share dtype
-    (e.g. an fp16 detection feature against a seed's carried-over fp32 mean).
-    '''
-    clip_sim = float(torch.dot(det['clip_ft_mean'].float(), obj['clip_ft_mean'].float()))
-    dino_sim = float(torch.dot(det['dino_ft_mean'].float(), obj['dino_ft_mean'].float()))
-    return clip_weight * clip_sim + dino_weight * dino_sim
-
-
 def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: FrameView = None,
                              visibility: "_VisibilityCache" = None, det_eroded_idx=None) -> dict:
     """
@@ -813,18 +769,6 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
 
     `gate_class` on a passing record says which direction earned the pass; the caller uses
     it to apply "merge every strong match, but only the closest weak one".
-
-    For a seed-descended `obj` (has a 'confirmed_pcd' key -- see slam/utils.py's
-    load_prior_scene_objects_as_seeds), passing the above is not enough on its own. A
-    second spatial check runs against confirmed_pcd alone (this scan's own re-confirmed
-    share, excluding whatever geometry the object still carries straight from the
-    "before" scan): if THAT independently passes the same gate, the object has already
-    earned enough of this scan's own evidence and the match proceeds exactly as above.
-    If not -- confirmed_pcd is still empty or too sparse, or it just doesn't spatially
-    match this detection -- a CLIP+DINO similarity check (_clip_dino_similarity) against
-    params.seed_semantic_sim_threshold decides instead, since spatial proximity to a
-    stale seed footprint alone can't tell "the same object, still there" from "something
-    new placed flush against it" (see the module docstring).
     """
     record = {
         "bbox_pass": True,
@@ -842,11 +786,6 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
         "primary_overlap": 0.0,
         "point_gate_direction": None,
         "point_gate_pass": False,
-        "confirmed_primary_overlap": None,
-        "confirmed_gate_pass": None,
-        "appearance_gate_required": False,
-        "appearance_gate_pass": None,
-        "semantic_similarity": None,
         "merged": False,
         "reason": REASON_POINT_OVERLAP_REJECT,
     }
@@ -879,24 +818,6 @@ def evaluate_detection_gates(det, obj, params: GeometryFusionParams, view: Frame
         return record
     record["point_gate_pass"] = True
 
-    confirmed_pcd = obj.get('confirmed_pcd')
-    if confirmed_pcd is not None:
-        confirmed_primary = 0.0
-        if len(confirmed_pcd.points) >= params.min_points_for_gates:
-            c_strong, c_weak, _ = _association_overlap(det, det_eroded_idx, confirmed_pcd, params, view, visibility, {})
-            confirmed_primary = c_weak if (c_weak is not None and c_weak > c_strong) else c_strong
-        record["confirmed_primary_overlap"] = confirmed_primary
-        record["confirmed_gate_pass"] = confirmed_primary >= params.point_overlap_thresh
-
-        if not record["confirmed_gate_pass"]:
-            record["appearance_gate_required"] = True
-            similarity = _clip_dino_similarity(det, obj)
-            record["semantic_similarity"] = similarity
-            record["appearance_gate_pass"] = similarity >= params.seed_semantic_sim_threshold
-            if not record["appearance_gate_pass"]:
-                record["reason"] = REASON_APPEARANCE_REJECT
-                return record
-
     record["reason"] = REASON_MERGE
     strong_pass = strong_overlap >= params.point_overlap_thresh
     # A strong claim stands on its own -- the detection is substantially this object, so
@@ -925,6 +846,19 @@ def evaluate_object_pair_gates(obj_a, obj_b, params: GeometryFusionParams) -> di
     ways) -- normal consistency is the one signal here that can still catch that,
     despite the known blind spot for two flush, SAME-facing surfaces (abs() treats
     opposite-facing normals as agreeing, since estimate_normals leaves them unoriented).
+
+    It also runs the SAME containment check evaluate_detection_gates uses (see that
+    function and params.containment_weak_min): primary_overlap alone can't tell "these
+    are two partial views of the same object" apart from "a small object sits flush on
+    a much bigger one" (a remote resting on a table scores ~0.86 remote->table even
+    though barely any of the table is near the remote). min(overlap_a_to_b,
+    overlap_b_to_a) is exactly the direction that stays low in the containment case, and
+    checking it here matters BECAUSE the normal-consistency gate above is the one
+    signal blind to it: a remote lying flat on a table has its top face and the
+    tabletop both facing straight up, so their normals agree (abs() can't tell
+    same-facing from opposite-facing) and normal_consistency_ratio comes back ~1.0 right
+    alongside the high primary_overlap. Checked before normal consistency, since it's
+    the cheaper, more specific rejection reason when both would fire.
     '''
     record = {
         "bbox_pass": True,
@@ -948,10 +882,16 @@ def evaluate_object_pair_gates(obj_a, obj_b, params: GeometryFusionParams) -> di
     record["overlap_a_to_b"] = overlap_a2b
     record["overlap_b_to_a"] = overlap_b2a
     record["primary_overlap"] = max(overlap_a2b, overlap_b2a)
+    record["min_overlap"] = min(overlap_a2b, overlap_b2a)
 
     if record["primary_overlap"] < params.point_overlap_thresh:
         return record
     record["point_gate_pass"] = True
+
+    if (params.containment_weak_min is not None
+            and record["min_overlap"] < params.containment_weak_min):
+        record["reason"] = REASON_CONTAINMENT_REJECT
+        return record
 
     if overlap_a2b >= overlap_b2a:
         ratio = _normal_consistency(pcd_a, pcd_b, a_idx, b_idx, params)
@@ -1028,18 +968,20 @@ def fuse_detections_geometry_only(
 
         records = []
         strong_ids, weak_ids = [], []
-        n_large_skipped = 0
         for obj_idx in np.nonzero(bbox_pass)[0]:
-            # An object already grown past the size limit stops being offered as a
-            # candidate, so it cannot keep swallowing what sits on it. This does split a
-            # large surface into several nodes over the scan -- every later detection of
-            # it starts a fresh one -- which is why global_geometry_consolidation, the
-            # post-scan object-object sweep, deliberately does NOT apply this rule: the
-            # fragments are collected back into one node there. Absorption is what gets
-            # blocked; node identity survives.
-            if params.exclude_large_from_fusion and obj_list[obj_idx].get('is_large'):
-                n_large_skipped += 1
-                continue
+            # is_large is deliberately NOT a candidate filter here (it used to be --
+            # an object already marked is_large was withheld as a merge candidate, on
+            # the reasoning that it "cannot keep swallowing what sits on it"). That
+            # excluded is_large from construction/fusion in name only: it fragmented a
+            # large surface into a fresh node every few frames (every later detection
+            # of the surface itself, not just of things resting on it, was refused),
+            # requiring global_geometry_consolidation to reassemble it after the scan
+            # -- and it was never the thing actually preventing swallowing, since the
+            # containment check below (containment_weak_min, keyed off this frame's own
+            # weak_overlap) already does that job per detection, independent of size.
+            # is_large is reserved for the SceneDiff comparison stage
+            # (scenediff_exclude_large_objects) barring a large object from asserting
+            # added/removed/moved -- it has no business shaping the graph itself.
             record = evaluate_detection_gates(
                 det, obj_list[obj_idx], params, view, visibility, det_eroded_idx=det_eroded_idx)
             # obj_idx is this object's position in the live list, which merges and
@@ -1048,11 +990,7 @@ def fuse_detections_geometry_only(
             # log row names a specific object in a specific overlay image.
             record["obj_num"] = obj_list[obj_idx].get('curr_obj_num')
             records.append((int(obj_idx), record))
-            # point_gate_pass alone isn't enough any more: a seed-descended candidate
-            # (see evaluate_detection_gates) can pass the spatial gate and still get
-            # rejected by the appearance gate that follows it, in which case gate_class
-            # is never set. Only a record that made it all the way through has one.
-            if "gate_class" not in record:
+            if not record["point_gate_pass"]:
                 continue
             (strong_ids if record["gate_class"] == "strong" else weak_ids).append(int(obj_idx))
 
@@ -1170,13 +1108,39 @@ def fuse_detections_geometry_only(
                 "n_weak": len(weak_ids),
                 "n_weak_dropped": len(weak_dropped),
                 "n_host_excluded": len(host_excluded),
-                "n_large_skipped": n_large_skipped,
                 "n_bbox_reject": int(len(bbox_pass) - bbox_pass.sum()),
                 "action": action,
                 "reason": summary_reason,
             })
 
     return MapObjectList(obj_list)
+
+
+def _pick_anchor(i: int, j: int, obj_i: dict, obj_j: dict) -> tuple[int, int]:
+    '''
+    Which of (i, j) survives as the merged node's identity (class_name, curr_obj_num --
+    see the skip_attributes list in merge_obj2_into_obj1): whichever has more
+    detections behind it, n_points as a tie-break. Falls back to plain index order
+    (i keeps its identity, matching the old unconditional behaviour) only when both are
+    exactly equal.
+
+    Without this, global_geometry_consolidation's evaluated list is sorted by
+    primary_overlap, not by list position, but the merge itself always folded j into i
+    -- i.e. whichever object happened to be discovered first kept its name. A tiny
+    object seeded on frame 0 (an early curr_obj_num) merging with a large object whose
+    OWN fragments were only reunited several sweeps later could then survive as the
+    anchor, handing its class_name and id to geometry it has nothing to do with -- e.g.
+    a coffee table's fragments reuniting with a remote sitting on it (a case the
+    containment gate in evaluate_object_pair_gates should already reject, but this is a
+    cheap, independent safeguard against the same failure mode).
+    '''
+    n_det_i = obj_i.get('num_detections', 0)
+    n_det_j = obj_j.get('num_detections', 0)
+    if n_det_i != n_det_j:
+        return (i, j) if n_det_i > n_det_j else (j, i)
+    n_pts_i = obj_i.get('n_points', 0)
+    n_pts_j = obj_j.get('n_points', 0)
+    return (i, j) if n_pts_i >= n_pts_j else (j, i)
 
 
 # ---------------------------------------------------------------- global consolidation
@@ -1232,10 +1196,12 @@ def global_geometry_consolidation(
                     # next sweep instead of trusting this now-stale measurement.
                     record["reason"] = REASON_DEFERRED
                 else:
-                    obj_list[i] = _merge_into(obj_list[i], obj_list[j], params, run_dbscan=True)
+                    anchor, absorbed = _pick_anchor(i, j, obj_list[i], obj_list[j])
+                    obj_list[anchor] = _merge_into(obj_list[anchor], obj_list[absorbed], params, run_dbscan=True)
                     record["merged"] = True
+                    record["anchor"] = anchor
                     frozen.update((i, j))
-                    dead.add(j)
+                    dead.add(absorbed)
                     merged_any = True
 
             if debug is not None and debug.enabled:
@@ -1429,8 +1395,7 @@ def object_coverage_stat(obj, percentile: float):
     obj['mask'] on demand because this is asked once per merge per frame, and a
     well-observed object accumulates hundreds of full-frame boolean masks.
 
-    Returns None when the object has no detections of its own -- an unconfirmed seed,
-    which has geometry but has never been seen this scan.
+    Returns None when the object has no detections of its own.
     '''
     coverage = obj.get('mask_coverage')
     if not coverage:
